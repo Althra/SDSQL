@@ -5,7 +5,7 @@ xiu xuan lin cheng
 ![xiu](https://avatars.githubusercontent.com/u/142519894)
 ![xuan](https://avatars.githubusercontent.com/u/163504589)
 ![lin](https://avatars.githubusercontent.com/u/175211141)
-![cheng]()
+![cheng](https://avatars.githubusercontent.com/u/163505536)
 
 ```py
 SDSQL/
