@@ -2,7 +2,7 @@
 
 xiu xuan lin cheng
 
-![xiu](https://github.com/user-attachments/assets/266b5ac1-07ea-4685-8b4a-a7e86c0add87)
+![xiu](https://avatars.githubusercontent.com/u/142519894)
 ![xuan](https://avatars.githubusercontent.com/u/163504589)
 ![lin](https://avatars.githubusercontent.com/u/175211141)
 ![cheng]()
