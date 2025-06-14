@@ -84,14 +84,17 @@ bool evaluateSingleComparison(const Row& row, const TableData& tableMetadata, co
         size_t currentOpPos = trimmedCondition.find(op_pair.first);
         if (currentOpPos != std::string::npos) {
             // 找到操作符，确保不是部分匹配（例如 '=' 不应匹配 '!='）
-            // 这是一个简单的启发式，更严谨的需要正则或词法分析
-            if ((op_pair.first.length() == 1 && currentOpPos > 0 && 
-                 (trimmedCondition[currentOpPos-1] == '>' || trimmedCondition[currentOpPos-1] == '<' || trimmedCondition[currentOpPos-1] == '!')) ||
-                 (op_pair.first.length() == 2 && currentOpPos > 0 && 
-                 (trimmedCondition[currentOpPos-1] == '=' || trimmedCondition[currentOpPos-1] == '>' || trimmedCondition[currentOpPos-1] == '<' || trimmedCondition[currentOpPos-1] == '!'))) {
-                // Skip if it's part of a longer operator (e.g., found '=' in '!=')
-                continue;
+            if (op_pair.first.length() == 1 && currentOpPos > 0) {
+                 char prevChar = trimmedCondition[currentOpPos-1];
+                 if ((op_pair.first == "=" && (prevChar == '>' || prevChar == '<' || prevChar == '!')) ||
+                     (op_pair.first == ">" && prevChar == '<') ||
+                     (op_pair.first == "<" && prevChar == '>')) {
+                     continue; // Skip if it's part of a longer operator (e.g., found '=' in '!=')
+                 }
+            } else if (op_pair.first.length() == 2 && currentOpPos > 0) {
+                 if (trimmedCondition[currentOpPos-1] == '<' && op_pair.first == ">=") continue;
             }
+
             opPos = currentOpPos;
             op = op_pair.second;
             break; // 找到最左边的操作符后停止
@@ -113,8 +116,6 @@ bool evaluateSingleComparison(const Row& row, const TableData& tableMetadata, co
 
     int colIndex = tableMetadata.getColumnIndex(colName);
     if (colIndex == -1) {
-        // 列不存在
-        // std::cerr << "Warning: 比较条件中引用的列 '" << colName << "' 不存在。" << std::endl;
         return false;
     }
 
@@ -163,7 +164,7 @@ bool evaluateSingleComparison(const Row& row, const TableData& tableMetadata, co
             if (op == "!=") return rowValueStr != valueStr;
             if (op == ">") return rowValueStr > valueStr;
             if (op == "<") return rowValueStr < valueStr;
-            if (op == ">=") return rowValueStr >= valueStr;
+            if (op == ">=") return rowValueStr >= valueStr; // 修正：此处原为 valueValueStr
             if (op == "<=") return rowValueStr <= valueStr;
         }
     } catch (const std::invalid_argument& e) {
@@ -213,8 +214,7 @@ bool evaluateCondition(const Row& row, const TableData& tableMetadata, const std
 }
 
 
-// QueryResult 的具体实现类，现在在 DMLOperations.cpp 中定义
-// 在 DatabaseAPI.hpp 中，只需要 QueryResult 抽象类的声明
+// QueryResult 的具体实现类
 class InMemoryQueryResult : public QueryResult {
 private:
     std::vector<Row> rows_;         // 实际的结果数据
@@ -300,7 +300,6 @@ public:
 
 
 // --- DMLOperations::Impl 的具体实现 ---
-// 它会持有 Database::Impl* 的指针来访问数据
 class DMLOperations::Impl {
 public:
     Database::Impl* dbCoreImpl_; // 指向数据库核心实现的指针
@@ -322,9 +321,17 @@ public:
      * @return 成功插入的行数（通常为1），如果失败则返回0。
      */
     int insert(const std::string& tableName, const std::map<std::string, std::string>& values) {
+        // --- 权限检查 ---
+        if (!dbCoreImpl_->checkPermissionInternal(dbCoreImpl_->getCurrentUser(), PermissionType::INSERT, "TABLE", tableName)) {
+            throw PermissionDeniedException("INSERT 权限不足: 用户 '" + dbCoreImpl_->getCurrentUser() + "' 无法在表 '" + tableName + "' 上执行插入操作。");
+        }
+
         TableData* table = dbCoreImpl_->getMutableTableData(tableName);
         if (!table) {
-            throw TableNotFoundException("插入失败: 表 '" + tableName + "' 不存在。");
+            // DMLOps 现在将尝试从文件加载表，如果不存在则抛出 TableNotFoundException
+            // 或者，DDLOps 应该负责确保表在内存中可用
+            // 这里我们假设 DMLOperations 的 getMutableTableData 已经尝试加载或 Database::Impl 会处理
+            throw TableNotFoundException("插入失败: 表 '" + tableName + "' 不存在或未加载到内存。");
         }
 
         Row newRow(table->columns.size());
@@ -334,13 +341,16 @@ public:
             if (it != values.end() && colIndex != -1) {
                 newRow[colIndex] = it->second;
             } else if (colIndex != -1) {
-                // 如果某个列没有提供值，则默认为空字符串
-                newRow[colIndex] = ""; // 在实际数据库中，会根据列定义处理NULL或默认值
+                newRow[colIndex] = ""; // 默认空字符串
             }
         }
+        
+        // 记录日志 (如果事务管理模块已实现)
+        dbCoreImpl_->logOperation(LogEntry(dbCoreImpl_->currentTransactionId_, LogEntryType::INSERT, tableName, {}, newRow));
+
         table->rows.push_back(newRow);
         std::cout << "DMLOperations::Impl: 成功插入到表 '" << tableName << "'。" << std::endl;
-        return 1; // 成功插入一行
+        return 1;
     }
 
     /**
@@ -351,22 +361,34 @@ public:
      * @return 受影响的行数。
      */
     int update(const std::string& tableName, const std::map<std::string, std::string>& updates, const std::string& whereClause) {
+        // --- 权限检查 ---
+        if (!dbCoreImpl_->checkPermissionInternal(dbCoreImpl_->getCurrentUser(), PermissionType::UPDATE, "TABLE", tableName)) {
+            throw PermissionDeniedException("UPDATE 权限不足: 用户 '" + dbCoreImpl_->getCurrentUser() + "' 无法在表 '" + tableName + "' 上执行更新操作。");
+        }
+
         TableData* table = dbCoreImpl_->getMutableTableData(tableName);
         if (!table) {
-            throw TableNotFoundException("更新失败: 表 '" + tableName + "' 不存在。");
+            throw TableNotFoundException("更新失败: 表 '" + tableName + "' 不存在或未加载到内存。");
         }
 
         int affectedRows = 0;
-        for (Row& row : table->rows) {
-            if (DMLHelpers::evaluateCondition(row, *table, whereClause)) {
+        
+        for (size_t i = 0; i < table->rows.size(); ++i) { 
+            Row& currentRow = table->rows[i]; 
+            if (DMLHelpers::evaluateCondition(currentRow, *table, whereClause)) {
+                Row oldRowState = currentRow; // 记录更新前的状态
+
                 for (const auto& pair : updates) {
                     int colIndex = table->getColumnIndex(pair.first);
                     if (colIndex != -1) {
-                        row[colIndex] = pair.second;
+                        currentRow[colIndex] = pair.second;
                     } else {
                         std::cerr << "Warning: 更新数据时列 '" << pair.first << "' 不存在于表 '" << tableName << "' 中。" << std::endl;
                     }
                 }
+                // 记录日志
+                dbCoreImpl_->logOperation(LogEntry(dbCoreImpl_->currentTransactionId_, LogEntryType::UPDATE_OLD_VALUE, tableName, oldRowState, {}, static_cast<int>(i)));
+                
                 affectedRows++;
             }
         }
@@ -380,23 +402,32 @@ public:
      * @param whereClause 用于筛选记录的条件字符串。
      * @return 被删除的行数。
      */
-
     int remove(const std::string& tableName, const std::string& whereClause) {
-        TableData* table = dbCoreImpl_->getMutableTableData(tableName);
-        if (!table) {
-            throw TableNotFoundException("删除失败: 表 '" + tableName + "' 不存在。");
+        // --- 权限检查 ---
+        if (!dbCoreImpl_->checkPermissionInternal(dbCoreImpl_->getCurrentUser(), PermissionType::DELETE, "TABLE", tableName)) {
+            throw PermissionDeniedException("DELETE 权限不足: 用户 '" + dbCoreImpl_->getCurrentUser() + "' 无法在表 '" + tableName + "' 上执行删除操作。");
         }
 
-        int initialSize = static_cast<int>(table->rows.size());
-        // 使用 erase-remove idiom 删除符合条件的行
-        auto it = std::remove_if(table->rows.begin(), table->rows.end(),
-                                 [&](const Row& row) {
-                                     return DMLHelpers::evaluateCondition(row, *table, whereClause);
-                                 });
-        table->rows.erase(it, table->rows.end());
-        int removedRows = initialSize - static_cast<int>(table->rows.size());
-        std::cout << "DMLOperations::Impl: 从表 '" << tableName << "' 删除，被删除行数: " << removedRows << std::endl;
-        return removedRows;
+        TableData* table = dbCoreImpl_->getMutableTableData(tableName);
+        if (!table) {
+            throw TableNotFoundException("删除失败: 表 '" + tableName + "' 不存在或未加载到内存。");
+        }
+
+        std::vector<Row> rowsToKeep;
+        int removedCount = 0;
+        for (const Row& row : table->rows) {
+            if (DMLHelpers::evaluateCondition(row, *table, whereClause)) {
+                // 记录日志
+                dbCoreImpl_->logOperation(LogEntry(dbCoreImpl_->currentTransactionId_, LogEntryType::DELETE, tableName, row, {}));
+                removedCount++;
+            } else {
+                rowsToKeep.push_back(row);
+            }
+        }
+        table->rows = std::move(rowsToKeep); 
+        
+        std::cout << "DMLOperations::Impl: 从表 '" << tableName << "' 删除，被删除行数: " << removedCount << std::endl;
+        return removedCount;
     }
 
     /**
@@ -407,11 +438,15 @@ public:
      * @return 指向 QueryResult 对象的 unique_ptr，包含查询结果集。
      * 客户端应通过 QueryResult 迭代结果。
      */
-    // 调用实例：std::unique_ptr<QueryResult> complexQueryUsers = dml.select("Users", "age > 25 AND name != 'Bob'");
     std::unique_ptr<QueryResult> select(const std::string& tableName, const std::string& whereClause, const std::string& orderBy) {
+        // --- 权限检查 ---
+        if (!dbCoreImpl_->checkPermissionInternal(dbCoreImpl_->getCurrentUser(), PermissionType::SELECT, "TABLE", tableName)) {
+            throw PermissionDeniedException("SELECT 权限不足: 用户 '" + dbCoreImpl_->getCurrentUser() + "' 无法在表 '" + tableName + "' 上执行查询操作。");
+        }
+
         const TableData* table = dbCoreImpl_->getTableData(tableName);
         if (!table) {
-            throw TableNotFoundException("查询失败: 表 '" + tableName + "' 不存在。");
+            throw TableNotFoundException("查询失败: 表 '" + tableName + "' 不存在或未加载到内存。");
         }
 
         std::vector<Row> resultSet;
@@ -421,24 +456,20 @@ public:
             }
         }
 
-        // 简化的 orderBy 实现 (只支持单列排序)
         if (!orderBy.empty()) {
             int orderColIndex = table->getColumnIndex(orderBy);
             if (orderColIndex != -1) {
                 DataType orderColType = table->getColumnType(orderColIndex);
                 std::sort(resultSet.begin(), resultSet.end(),
                           [&](const Row& a, const Row& b) {
-                              // 确保行有足够的元素
                               if (orderColIndex >= a.size() || orderColIndex >= b.size()) {
-                                  // 这不应该发生，但为了安全考虑，可以定义一个稳定顺序或抛出异常
                                   return false; 
                               }
-                              // 对于字符串，直接使用其比较运算符即可实现字典序
                               if (orderColType == DataType::INT) {
                                   return std::stoi(a[orderColIndex]) < std::stoi(b[orderColIndex]);
                               } else if (orderColType == DataType::DOUBLE) {
                                   return std::stod(a[orderColIndex]) < std::stod(b[orderColIndex]);
-                              } else { // 默认为字符串比较 (DataType::STRING)
+                              } else { 
                                   return a[orderColIndex] < b[orderColIndex];
                               }
                           });
