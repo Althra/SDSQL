@@ -5,12 +5,19 @@
 
 void CliApp::run() {
     std::string line;
+    std::cout << "Type 'exit' or 'quit' to exit." << std::endl;
     while (true) {
-        std::cout << "DB_CLI> ";
+        // --- 提示符现在会显示当前的数据库上下文 ---
+        std::cout << "DB_CLI";
+        if (!current_database.empty()) {
+            std::cout << " [" << current_database << "]";
+        }
+        std::cout << "> ";
+        
         if (!std::getline(std::cin, line) || line == "exit" || line == "quit") break;
         execute(line);
     }
-    std::cout << "Goodbye!" << std::endl;
+    std::cout << "\nGoodbye!" << std::endl;
 }
 
 void CliApp::execute(const std::string& line) {
@@ -23,7 +30,7 @@ void CliApp::execute(const std::string& line) {
 
         if (!command_obj) return;
 
-        // --- 主命令分派逻辑 ---
+        //主命令分派逻辑
         if (auto* cmd = dynamic_cast<CreateDatabaseCommand*>(command_obj.get())) handle_create_database(*cmd);
         else if (auto* cmd = dynamic_cast<DropDatabaseCommand*>(command_obj.get())) handle_drop_database(*cmd);
         else if (auto* cmd = dynamic_cast<UseDatabaseCommand*>(command_obj.get())) handle_use_database(*cmd);
@@ -40,47 +47,95 @@ void CliApp::execute(const std::string& line) {
     }
 }
 
-// --- DDL 处理函数框架 ---
+// --- DDL 处理函数 ---
 void CliApp::handle_create_database(const CreateDatabaseCommand& cmd) {
     std::cout << "[Placeholder] Creating database: " << cmd.db_name << std::endl;
     // TODO: 序列化命令并发送到服务器
 }
+
 void CliApp::handle_drop_database(const DropDatabaseCommand& cmd) {
     std::cout << "[Placeholder] Dropping database: " << cmd.db_name << std::endl;
+
+
     // TODO: 序列化命令并发送到服务器
+    if (cmd.db_name == current_database) {
+        current_database.clear();
+        std::cout << "Note: The current active database has been dropped." << std::endl;
+    }
+    
 }
+
 void CliApp::handle_use_database(const UseDatabaseCommand& cmd) {
-    std::cout << "[Placeholder] Using database: " << cmd.db_name << std::endl;
-    // TODO: 序列化命令并发送到服务器
+    // TODO: 与服务器通信以验证数据库是否存在
+
+    // --- 设置当前数据库上下文 ---
+    current_database = cmd.db_name;
+    std::cout << "Database context changed to '" << current_database << "'." << std::endl;
+    
 }
+
 void CliApp::handle_create_table(const CreateTableCommand& cmd) {
-    std::cout << "[Placeholder] Creating table: " << cmd.table_name << std::endl;
+    // --- 执行前检查数据库上下文 ---
+    if (current_database.empty()) {
+        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        return;
+    }
+    std::cout << "[Placeholder] Creating table '" << cmd.table_name << "' in database '" << current_database << "'." << std::endl;
     for (const auto& col : cmd.columns) {
         std::cout << "  Column: " << col.name << ", Type: " << to_string(col.type) 
                   << (col.is_primary ? ", PRIMARY KEY" : "") << std::endl;
     }
     // TODO: 序列化命令并发送到服务器
 }
+
 void CliApp::handle_drop_table(const DropTableCommand& cmd) {
-    std::cout << "[Placeholder] Dropping table: " << cmd.table_name << std::endl;
+    // --- 执行前检查数据库上下文 ---
+    if (current_database.empty()) {
+        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        return;
+    }
+    std::cout << "[Placeholder] Dropping table '" << cmd.table_name << "' from database '" << current_database << "'." << std::endl;
     // TODO: 序列化命令并发送到服务器
 }
 
-// --- DML 处理函数框架 ---
+// --- DML 处理函数 ---
 void CliApp::handle_insert(const InsertCommand& cmd) {
-    std::cout << "[Placeholder] Inserting into table: " << cmd.table_name << std::endl;
+    // --- 执行前检查数据库上下文 ---
+    if (current_database.empty()) {
+        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        return;
+    }
+    std::cout << "[Placeholder] Inserting into table '" << cmd.table_name << "' in database '" << current_database << "'." << std::endl;
     // TODO: 序列化命令并发送到服务器
 }
+
 void CliApp::handle_select(const SelectCommand& cmd) {
-    std::cout << "[Placeholder] Selecting from table: " << cmd.table_name << std::endl;
+    // --- 执行前检查数据库上下文 ---
+    if (current_database.empty()) {
+        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        return;
+    }
+    std::cout << "[Placeholder] Selecting from table '" << cmd.table_name << "' in database '" << current_database << "'." << std::endl;
     if(cmd.where_clause) std::cout << "  With WHERE clause." << std::endl;
     // TODO: 序列化命令并发送到服务器
 }
+
 void CliApp::handle_update(const UpdateCommand& cmd) {
-    std::cout << "[Placeholder] Updating table: " << cmd.table_name << std::endl;
+    // --- 执行前检查数据库上下文 ---
+    if (current_database.empty()) {
+        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        return;
+    }
+    std::cout << "[Placeholder] Updating table '" << cmd.table_name << "' in database '" << current_database << "'." << std::endl;
     // TODO: 序列化命令并发送到服务器
 }
+
 void CliApp::handle_delete(const DeleteCommand& cmd) {
-    std::cout << "[Placeholder] Deleting from table: " << cmd.table_name << std::endl;
+    // --- 执行前检查数据库上下文 ---
+    if (current_database.empty()) {
+        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        return;
+    }
+    std::cout << "[Placeholder] Deleting from table '" << cmd.table_name << "' in database '" << current_database << "'." << std::endl;
     // TODO: 序列化命令并发送到服务器
 }

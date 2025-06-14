@@ -2,13 +2,16 @@
 #define CLI_APP_HPP
 
 #include "Parser.hpp"
+#include <string>
 
 class CliApp {
 public:
     void run();
 
 private:
-    bool is_connected = false;
+    //当前数据库的上下文 
+    std::string current_database;
+
     void execute(const std::string& line);
 
     // DDL Handlers
@@ -24,5 +27,4 @@ private:
     void handle_update(const UpdateCommand& cmd);
     void handle_delete(const DeleteCommand& cmd);
 };
-
 #endif // CLI_APP_HPP
