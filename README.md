@@ -25,6 +25,7 @@ SDSQL
 │  │  └─ gui
 │  │     └─ README.md
 │  └─ server
+│     ├─ DatabaseAPI.hpp
 │     └─ README.md
 ├─ lib
 │  └─ README.md
@@ -45,6 +46,7 @@ SDSQL
 │  │  └─ gui
 │  │     └─ README.md
 │  └─ server
+│     ├─ DDLOperations.cpp
 │     └─ README.md
 └─ test
    └─ README.md
