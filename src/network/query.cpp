@@ -408,12 +408,10 @@ NetworkQueryExecutor::executeQuery(const QueryRequest& request) {
     QueryRequest query_request = request;
     query_request.setSessionToken(session_token);
     
-    std::cout << "[DEBUG] Executing  query..." << std::endl;
-    
     // 发送请求
     auto send_result = client.sendMessage(query_request);
     if (!send_result.has_value()) {
-        std::cerr << "[ERROR] Failed to send  query request" << std::endl;
+        std::cerr << "[ERROR] Failed to send query request" << std::endl;
         return std::unexpected(send_result.error());
     }
     

@@ -22,52 +22,15 @@ std::string current_token = "";
 bool is_logged_in = false;
 std::unique_ptr<Database> database_instance = nullptr;
 
-// 初始化测试数据
-void initializeTestData() {
-    try {
-        DDLOperations& ddl_ops = database_instance->getDDLOperations();
-        DMLOperations& dml_ops = database_instance->getDMLOperations();
-        
-        // 创建测试数据库
-        std::cout << "[INIT] Creating test database..." << std::endl;
-        ddl_ops.createDatabase("test_db");
-        ddl_ops.useDatabase("test_db");
-        
-        // 创建测试表
-        std::vector<ColumnDefinition> columns = {
-            {"id", DataType::INT, true},
-            {"name", DataType::STRING},
-            {"age", DataType::INT}
-        };
-        ddl_ops.createTable("users", columns);
-        
-        // 插入测试数据
-        std::map<std::string, std::string> user1 = {
-            {"id", "1"}, {"name", "Alice"}, {"age", "25"}
-        };
-        std::map<std::string, std::string> user2 = {
-            {"id", "2"}, {"name", "Bob"}, {"age", "30"}
-        };
-        
-        dml_ops.insert("users", user1);
-        dml_ops.insert("users", user2);
-        
-        std::cout << "[INIT] Test data initialized successfully" << std::endl;
-        
-    } catch (const std::exception& e) {
-        std::cerr << "[INIT] Failed to initialize test data: " << e.what() << std::endl;
-    }
-}
-
 int main() {
-    std::cout << "=== Database Server with Network Layer ===" << std::endl;
+    std::cout << "=== Database Server ===" << std::endl;
     std::cout << "Username: " << USERNAME << std::endl;
     std::cout << "Password: " << PASSWORD << std::endl;
     
     // 初始化数据库
     const std::string dbRoot = "./server_db_root";
     
-    // 清理旧数据（可选）
+    // 清理旧数据
     if (std::filesystem::exists(dbRoot)) {
         std::cout << "[INIT] Cleaning old database directory..." << std::endl;
         std::filesystem::remove_all(dbRoot);
@@ -77,9 +40,6 @@ int main() {
         // 创建数据库实例
         database_instance = std::make_unique<Database>(dbRoot);
         std::cout << "[INIT] Database initialized at: " << dbRoot << std::endl;
-        
-        // 初始化测试数据
-        initializeTestData();
         
         // 启动网络服务器
         NET::SocketServer server;
@@ -250,11 +210,11 @@ NET::QueryResponse executeQuery(const NET::QueryRequest& request) {
             }
             
             case NET::OperationType::INSERT: {
-                std::map<std::string, std::string> values;
+                std::vector<std::string> values;
                 const auto& insert_values = request.getInsertValues();
 
                 for (size_t i = 0; i < insert_values.size(); ++i) {
-                    values["col_" + std::to_string(i)] = insert_values[i].value;
+                    values.push_back(insert_values[i].value);
                 }
                 
                 int affected_rows = dml_ops.insert(request.getTableName(), values);

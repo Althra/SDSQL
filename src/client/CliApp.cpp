@@ -20,9 +20,8 @@ void CliApp::run() {
         std::getline(std::cin, password);
         logged_in = login(username, password);
         if (logged_in){
-        std::cout << "Logged in as " << username << std::endl; break; 
+        break; 
         }
-        std::cout << "Login failed. Please try again." << std::endl;
     }
     
     while (logged_in) {
@@ -60,10 +59,10 @@ void CliApp::execute(const std::string& line) {
         else if (auto* cmd = dynamic_cast<SelectCommand*>(command_obj.get())) handle_select(*cmd);
         else if (auto* cmd = dynamic_cast<UpdateCommand*>(command_obj.get())) handle_update(*cmd);
         else if (auto* cmd = dynamic_cast<DeleteCommand*>(command_obj.get())) handle_delete(*cmd);
-        else std::cerr << "Error: Unhandled command type." << std::endl;
+        else std::cerr << "✗ Error: Unhandled command type." << std::endl;
         
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "✗ Error: " << e.what() << std::endl;
     }
 }
 
@@ -79,22 +78,24 @@ std::string tokenTypeToString(TokenType type) {
 // 通用的查询执行函数
 bool CliApp::executeQuery(const NET::QueryRequest& request) {
     if (!query_executor.isAuthenticated()) {
-        std::cerr << "Error: Not logged in. Please login first." << std::endl;
+        std::cerr << "✗ Error: Not logged in. Please login first." << std::endl;
         return false;
     }
     
     auto result = query_executor.executeQuery(request);
     if (result.has_value()) {
-        handleQueryResponse(*result.value());
+        if (!handleQueryResponse(*result.value())) {
+            return false;
+        }
         return true;
     } else {
-        std::cerr << "Error: Failed to execute query." << std::endl;
+        std::cerr << "✗ Error: Failed to execute query." << std::endl;
         return false;
     }
 }
 
 // 格式化显示查询结果
-void CliApp::handleQueryResponse(const NET::QueryResponse& response) {
+bool CliApp::handleQueryResponse(const NET::QueryResponse& response) {
     if (response.isSuccess()) {
         const auto& columns = response.getColumnNames();
         const auto& rows = response.getRows();
@@ -105,7 +106,7 @@ void CliApp::handleQueryResponse(const NET::QueryResponse& response) {
             if (!rows.empty()) {
                 std::cout << "Affected rows: " << rows.size() << std::endl;
             }
-            return;
+            return true;
         }
         
         // 计算每列的最大宽度
@@ -161,7 +162,9 @@ void CliApp::handleQueryResponse(const NET::QueryResponse& response) {
         std::cout << "(" << rows.size() << " row" << (rows.size() != 1 ? "s" : "") << ")" << std::endl;
     } else {
         std::cerr << "✗ Error: " << response.getErrorMessage() << std::endl;
+        return false;
     }
+    return true;
 }
 
 // --- DDL 处理函数 ---
@@ -172,7 +175,7 @@ void CliApp::handle_create_database(const CreateDatabaseCommand& cmd) {
     request.setSessionToken(session_token);
     
     if (executeQuery(request)) {
-        std::cout << "Database '" << cmd.db_name << "' created successfully." << std::endl;
+        std::cout << "✓ Database '" << cmd.db_name << "' created successfully." << std::endl;
     }
 }
 
@@ -183,7 +186,7 @@ void CliApp::handle_drop_database(const DropDatabaseCommand& cmd) {
     request.setSessionToken(session_token);
     
     if (executeQuery(request)) {
-        std::cout << "Database '" << cmd.db_name << "' dropped successfully." << std::endl;
+        std::cout << "✓ Database '" << cmd.db_name << "' dropped successfully." << std::endl;
         
         // 如果删除的是当前使用的数据库，清除上下文
         if (cmd.db_name == current_database) {
@@ -209,7 +212,7 @@ void CliApp::handle_use_database(const UseDatabaseCommand& cmd) {
 void CliApp::handle_create_table(const CreateTableCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
+        std::cerr << "✗ Error: No database selected. Use 'USE <database_name>' first." << std::endl;
         return;
     }
     
@@ -233,7 +236,7 @@ void CliApp::handle_create_table(const CreateTableCommand& cmd) {
 void CliApp::handle_drop_table(const DropTableCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
+        std::cerr << "✗ Error: No database selected. Use 'USE <database_name>' first." << std::endl;
         return;
     }
     
@@ -251,7 +254,7 @@ void CliApp::handle_drop_table(const DropTableCommand& cmd) {
 void CliApp::handle_insert(const InsertCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
+        std::cerr << "✗ Error: No database selected. Use 'USE <database_name>' first." << std::endl;
         return;
     }
     
@@ -289,7 +292,7 @@ void CliApp::handle_insert(const InsertCommand& cmd) {
 void CliApp::handle_select(const SelectCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
+        std::cerr << "✗ Error: No database selected. Use 'USE <database_name>' first." << std::endl;
         return;
     }
     
@@ -323,7 +326,7 @@ void CliApp::handle_select(const SelectCommand& cmd) {
 void CliApp::handle_update(const UpdateCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
+        std::cerr << "✗ Error: No database selected. Use 'USE <database_name>' first." << std::endl;
         return;
     }
     
@@ -356,7 +359,7 @@ void CliApp::handle_update(const UpdateCommand& cmd) {
 void CliApp::handle_delete(const DeleteCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
+        std::cerr << "✗ Error: No database selected. Use 'USE <database_name>' first." << std::endl;
         return;
     }
     
@@ -382,7 +385,7 @@ bool CliApp::login(const std::string& username, const std::string& password) {
     // 连接服务器
     auto connect_result = client.connect(server_ip, server_port);
     if (!connect_result.has_value()) {
-        std::cerr << "Failed to connect to server." << std::endl;
+        std::cerr << "✗ Failed to connect to server." << std::endl;
         return false;
     }
     
@@ -390,14 +393,14 @@ bool CliApp::login(const std::string& username, const std::string& password) {
     NET::LoginRequest request(username, password);
     auto send_result = client.sendMessage(request);
     if (!send_result.has_value()) {
-        std::cerr << "Failed to send login request." << std::endl;
+        std::cerr << "✗ Failed to send login request." << std::endl;
         return false;
     }
     
     // 接收登录响应
     auto response_result = client.receiveMessage();
     if (!response_result.has_value()) {
-        std::cerr << "Failed to receive login response." << std::endl;
+        std::cerr << "✗ Failed to receive login response." << std::endl;
         return false;
     }
     

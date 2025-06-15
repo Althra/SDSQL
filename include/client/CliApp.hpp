@@ -49,7 +49,7 @@ private:
     
     // 辅助方法
     bool executeQuery(const NET::QueryRequest& request);
-    void handleQueryResponse(const NET::QueryResponse& response);
+    bool handleQueryResponse(const NET::QueryResponse& response);
 
 public:
     CliApp() : query_executor(client) {}
