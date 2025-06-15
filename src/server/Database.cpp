@@ -1,541 +1,601 @@
-// Database.cpp
-// 核心数据库实现，连接所有模块，并处理底层文件I/O和内存数据同步
+// src/server/Database.cpp
 
-#include "DatabaseAPI.hpp" // 包含API头文件
+#include "../../include/server/DatabaseAPI.hpp"
+#include <algorithm> // 用于 std::find_if
+#include <filesystem>
+#include <fstream> // 用于文件读写
 #include <iostream>
-#include <algorithm> // For std::reverse, std::remove_if
-#include <functional> // For std::hash (simple password hashing, still not secure)
-#include <filesystem> // For file and directory operations (C++17)
-#include <fstream>    // For file I/O
-#include <sstream>    // For string streams
+#include <stdexcept> // 用于 std::runtime_error
 
-// =======================================================================
-// --- Database::Impl 的具体定义 ---
-// 这是数据库的核心，包含所有表数据和低层操作
-// =======================================================================
+
+
+// ========================================================================
+// Database 类的 Pimpl 实现
+// ========================================================================
 class Database::Impl {
 public:
-    std::string dbPath_;      // 数据库系统的根目录 (由 Database 构造函数传入)
-    std::string currentDbName_; // 当前 'USE' 的数据库名
+  // 持有真正的核心数据 (原 DatabaseCoreImpl 的成员)
+  std::string rootPath;
+  std::string currentDbName;
+  bool isTransactionActive = false;
+  std::string transactionLogPath;
+  // DMLOperations* dml_ops_ = nullptr; // 已移除，DML现在通过 unique_ptr 管理
 
-    std::map<std::string, TableData> tables_; // 内存中的表数据 (用于DML的内存表)
+  // 新增：用于在内存中存储已加载的表数据
+  std::map<std::string, TableData> loadedTables_;
+  // 新增：用于存储用户账户信息
+  std::map<std::string, User> users_;
+  // 新增：当前登录的用户
+  std::string currentUser_;
+  // 新增：当前的事务ID
+  long currentTransactionId_ = 0;
 
-    // --- 事务相关成员 ---
-    bool inTransaction_;
-    long long currentTransactionId_;
-    long long nextTransactionId_;
-    std::vector<LogEntry> currentTransactionLog_;
+  // 持有所有模块的内部实现
+  std::unique_ptr<DDLOperations::Impl> ddl_impl_;
+  std::unique_ptr<DMLOperations::Impl> dml_impl_; // 新增
+  std::unique_ptr<TransactionManager::Impl> tx_impl_;
+  std::unique_ptr<AccessControl::Impl> ac_impl_; // 新增
 
-    // --- 权限控制相关成员 ---
-    std::map<std::string, User> users_; // 用户列表 (username -> User)
-    std::vector<PermissionEntry> permissions_; // 权限列表
-    std::string currentUser_;           // 当前登录的用户名 (空字符串表示未登录)
-
-    // --- 构造函数和析构函数 ---
-    explicit Impl(const std::string& dbPath) :
-        dbPath_(dbPath),
-        currentDbName_(""), // 初始无选中数据库
-        inTransaction_(false),
-        currentTransactionId_(0),
-        nextTransactionId_(1),
-        currentUser_("")
-    {
-        std::cout << "Database::Impl: 正在初始化数据库在 " << dbPath_ << std::endl;
-        // 确保根路径存在
-        if (!std::filesystem::exists(dbPath_)) {
-            std::filesystem::create_directories(dbPath_);
-            std::cout << "Database::Impl: 已创建数据库根目录: " << dbPath_ << std::endl;
-        }
-
-        // 加载用户和权限（简化：从文件加载或硬编码）
-        loadUsersAndPermissions();
-        // 创建一个默认管理员用户（如果不存在）
-        if (users_.find("admin") == users_.end()) {
-            createUserInternal("admin", "adminpass"); // 实际应在安全模式下进行密码哈希
-            // 默认管理员拥有所有权限，不需要通过 AccessControl::Impl 来授予，直接添加到 permissions_
-            // 否则会陷入鸡生蛋蛋生鸡的问题（谁来授予管理员权限）
-            PermissionEntry adminAllPerm;
-            adminAllPerm.username = "admin";
-
-            adminAllPerm.objectType = "DATABASE"; adminAllPerm.objectName = "";
-            adminAllPerm.permission = PermissionType::CREATE_TABLE; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::DROP_TABLE; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::SELECT; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::INSERT; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::UPDATE; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::DELETE; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::CREATE_DATABASE; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::DROP_DATABASE; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::ALTER_TABLE; permissions_.push_back(adminAllPerm); // 新增 ALTER_TABLE
-
-            adminAllPerm.objectType = "SYSTEM"; adminAllPerm.objectName = "";
-            adminAllPerm.permission = PermissionType::CREATE_USER; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::DROP_USER; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::GRANT_PERMISSION; permissions_.push_back(adminAllPerm);
-            adminAllPerm.permission = PermissionType::REVOKE_PERMISSION; permissions_.push_back(adminAllPerm);
-
-            std::cout << "Database::Impl: 已创建默认管理员用户 'admin' 并授予所有权限。" << std::endl;
-        }
-        
-        // 登录默认管理员，以便DML/DDL操作能够执行
-        // authenticateInternal("admin", "adminpass"); // 不在这里调用，由AccessControl来做
-        setCurrentUser("admin"); // 直接设置，因为是内部初始化
-        std::cout << "Database::Impl: 默认管理员 'admin' 已自动设置为当前用户。" << std::endl;
-
-        // 在实际数据库中，这里会加载所有数据库和表的元数据到内存
+  Impl(const std::string &dbPath) {
+    // 初始化核心数据
+    rootPath = dbPath;
+    if (!std::filesystem::exists(dbPath)) {
+      std::filesystem::create_directory(dbPath);
+      std::cout << "Database root directory created: " << dbPath << std::endl;
+    } else {
+      std::cout << "Database root directory already exists: " << dbPath
+                << std::endl;
     }
 
-    ~Impl() {
-        // 析构函数中不应抛出异常，因此需要捕获 rollbackInternal 中的异常
-        if (inTransaction_) {
-            std::cerr << "警告: 数据库关闭时有未提交的事务 " << currentTransactionId_ << "，尝试自动回滚。" << std::endl;
-            try {
-                rollbackInternal();
-            } catch (const DatabaseException& e) {
-                std::cerr << "回滚异常 (在析构函数中捕获): " << e.what() << std::endl;
-            }
-        }
-        // 持久化用户和权限
-        saveUsersAndPermissions();
-        // 实际数据库中，这里会进行所有内存中脏数据的持久化
-        std::cout << "Database::Impl: 数据库已关闭。" << std::endl;
+    // 尝试加载用户数据 (例如从 users.meta 文件)
+    loadUsers();
+
+    // 如果没有用户，创建默认管理员用户
+    if (users_.empty()) {
+      std::cout << "No users found, creating default admin user." << std::endl;
+      createUserInternal("admin", "admin_password"); // 默认密码
+      // 授予 admin 所有系统权限
+      grantPermissionInternal("admin", PermissionType::CREATE_USER, "SYSTEM");
+      grantPermissionInternal("admin", PermissionType::DROP_USER, "SYSTEM");
+      grantPermissionInternal("admin", PermissionType::GRANT_PERMISSION,
+                              "SYSTEM");
+      grantPermissionInternal("admin", PermissionType::REVOKE_PERMISSION,
+                              "SYSTEM");
+      // admin
+      // 拥有所有表操作权限（为了简化，这里可以视为对所有表拥有权限，或在后续登录后动态赋予）
+      grantPermissionInternal("admin", PermissionType::SELECT, "TABLE",
+                              ""); // 对所有表拥有 SELECT 权限
+      grantPermissionInternal("admin", PermissionType::INSERT, "TABLE",
+                              ""); // 对所有表拥有 INSERT 权限
+      grantPermissionInternal("admin", PermissionType::UPDATE, "TABLE",
+                              ""); // 对所有表拥有 UPDATE 权限
+      grantPermissionInternal("admin", PermissionType::DELETE, "TABLE",
+                              ""); // 对所有表拥有 DELETE 权限
+      grantPermissionInternal("admin", PermissionType::CREATE_TABLE, "TABLE",
+                              ""); // 对所有表拥有 CREATE_TABLE 权限
+      grantPermissionInternal("admin", PermissionType::DROP_TABLE, "TABLE",
+                              ""); // 对所有表拥有 DROP_TABLE 权限
+
+      saveUsers(); // 保存新创建的 admin 用户
     }
 
-    // --- DDL 内部辅助方法 (负责文件操作和与内存表同步) ---
-    // 注意：这里的 internal 方法不进行权限检查，权限检查由 DDLOperations::Impl 完成
+    // 创建并初始化所有模块的内部实现
+    ddl_impl_ = std::make_unique<DDLOperations::Impl>(this); // 传递 this 指针
+    dml_impl_ = std::make_unique<DMLOperations::Impl>(this); // 传递 this 指针
+    tx_impl_ =
+        std::make_unique<TransactionManager::Impl>(this); // 传递 this 指针
+    ac_impl_ = std::make_unique<AccessControl::Impl>(this); // 传递 this 指针
+  }
 
-    bool createDatabaseInternal(const std::string& dbName) {
-        std::filesystem::path dbPath = std::filesystem::path(dbPath_) / dbName;
-        try {
-            if (std::filesystem::exists(dbPath)) {
-                std::cerr << "Error: Database '" << dbName << "' already exists." << std::endl;
-                return false;
-            }
-            std::cout << "Database::Impl: 正在创建数据库目录: " << dbPath << std::endl;
-            return std::filesystem::create_directory(dbPath);
-        } catch (const std::filesystem::filesystem_error& e) {
-            std::cerr << "Filesystem error: " << e.what() << std::endl;
-            return false;
-        }
+  ~Impl() {
+    // 在销毁前保存所有用户数据
+    saveUsers();
+    // 在销毁前将所有内存中的表数据持久化到文件 (如果需要的话)
+    // 目前我们的 DML 操作是直接修改内存，但 commit 时会写入文件
+    // 确保在程序关闭时，所有未提交的事务被回滚或提示
+    if (isTransactionActive) {
+      std::cerr << "Warning: Database shutting down with an active "
+                   "transaction. Transaction will be rolled back."
+                << std::endl;
+      // 简单回滚，实际可能需要更复杂的恢复逻辑
+      // tx_impl_->rollback(); // 直接调用会导致循环依赖，或者由 Database
+      // 负责清理
+      std::filesystem::remove(transactionLogPath); // 删除日志文件
+      isTransactionActive = false;
+    }
+    // 清理 loadedTables_ 中的数据
+    loadedTables_.clear();
+  }
+
+  // --- 辅助方法，供 DDL, DML, Transaction, AccessControl 的 Impl 使用 ---
+
+  // 获取可修改的 TableData 指针
+  TableData *getMutableTableData(const std::string &tableName) {
+    if (currentDbName.empty()) {
+      std::cerr << "Error: No database selected." << std::endl;
+      return nullptr;
+    }
+    std::string fullTableName = currentDbName + "/" + tableName;
+    // 如果表已经在内存中，直接返回
+    auto it = loadedTables_.find(fullTableName);
+    if (it != loadedTables_.end()) {
+      return &(it->second);
+    }
+    // 否则尝试从文件加载
+    TableData loadedTable;
+    if (loadTableFromFile(tableName, loadedTable)) {
+      loadedTables_[fullTableName] = loadedTable; // 移动语义
+      return &(loadedTables_[fullTableName]);
+    }
+    return nullptr;
+  }
+
+  // 获取只读的 TableData 指针
+  const TableData *getTableData(const std::string &tableName) const {
+    if (currentDbName.empty()) {
+      std::cerr << "Error: No database selected." << std::endl;
+      return nullptr;
+    }
+    std::string fullTableName = currentDbName + "/" + tableName;
+    auto it = loadedTables_.find(fullTableName);
+    if (it != loadedTables_.end()) {
+      return &(it->second);
+    }
+    // 尝试从文件加载（只读操作也可能需要加载）
+    // 注意：这里需要一个非 const 的方法来加载并插入到 loadedTables_
+    // 对于 const getTableData，如果不在内存中，应该报错或返回空
+    std::cerr << "Error: Table '" << tableName
+              << "' not loaded into memory for read access." << std::endl;
+    return nullptr;
+  }
+
+  // 将内存中的表数据持久化到文件
+  bool saveTableToFile(const std::string &tableName) {
+    if (currentDbName.empty()) {
+      std::cerr << "Error: No database selected to save table." << std::endl;
+      return false;
+    }
+    std::string fullTableName = currentDbName + "/" + tableName;
+    auto it = loadedTables_.find(fullTableName);
+    if (it == loadedTables_.end()) {
+      std::cerr << "Error: Table '" << tableName
+                << "' not found in memory to save." << std::endl;
+      return false;
     }
 
-    bool dropDatabaseInternal(const std::string& dbName) {
-        std::filesystem::path dbPath = std::filesystem::path(dbPath_) / dbName;
-        try {
-            if (!std::filesystem::exists(dbPath)) {
-                std::cerr << "Error: Database '" << dbName << "' does not exist." << std::endl;
-                return false;
-            }
-            if (currentDbName_ == dbName) {
-                currentDbName_.clear();
-            }
-            std::cout << "Database::Impl: 正在删除数据库目录: " << dbPath << std::endl;
-            std::filesystem::remove_all(dbPath);
-            // 同时从内存中移除该数据库下的所有表
-            // (这里的逻辑需要更精确，假设表名是唯一的，并且所有属于该db的表都在tables_中)
-            std::vector<std::string> tablesToRemove;
-            for(auto const& [name, data] : tables_) {
-                // 更严谨的做法是 TableData 结构中包含其所属的数据库名
-                // 这里为简化，假设所有表都属于当前操作的数据库
-                tablesToRemove.push_back(name);
-            }
-            for (const auto& name : tablesToRemove) {
-                // 如果能判断出表属于被删除的数据库，则从内存中移除
-                tables_.erase(name);
-            }
-            return true;
-        } catch (const std::filesystem::filesystem_error& e) {
-            std::cerr << "Filesystem error: " << e.what() << std::endl;
-            return false;
-        }
+    const TableData &table = it->second;
+    std::filesystem::path dataFilePath =
+        std::filesystem::path(rootPath) / currentDbName / (table.name + ".dat");
+    std::ofstream dataFile(dataFilePath);
+    if (!dataFile.is_open()) {
+      std::cerr << "Error: Could not open data file for writing: "
+                << dataFilePath << std::endl;
+      return false;
     }
 
-    bool useDatabaseInternal(const std::string& dbName) {
-        std::filesystem::path dbPath = std::filesystem::path(dbPath_) / dbName;
-        if (std::filesystem::is_directory(dbPath)) {
-            currentDbName_ = dbName;
-            // 切换数据库时，可以考虑加载该数据库下的所有表元数据到内存 tables_
-            // 为了简化，这里不自动加载，DML操作会按需处理 TableNotFound
-            std::cout << "Database::Impl: 已切换当前数据库到 '" << dbName << "'。" << std::endl;
-            return true;
-        } else {
-            std::cerr << "Error: Database '" << dbName << "' not found." << std::endl;
-            return false;
+    for (const auto &row : table.rows) {
+      for (size_t i = 0; i < row.size(); ++i) {
+        dataFile << row[i];
+        if (i < row.size() - 1) {
+          dataFile << ","; // CSV 格式
         }
+      }
+      dataFile << "\n";
+    }
+    dataFile.close();
+    std::cout << "Table '" << tableName << "' data saved to file." << std::endl;
+    return true;
+  }
+
+  // 从文件加载表数据到内存
+  bool loadTableFromFile(const std::string &tableName, TableData &outTable) {
+    if (currentDbName.empty()) {
+      std::cerr << "Error: No database selected to load table." << std::endl;
+      return false;
+    }
+    std::filesystem::path metaFilePath =
+        std::filesystem::path(rootPath) / currentDbName / (tableName + ".meta");
+    std::filesystem::path dataFilePath =
+        std::filesystem::path(rootPath) / currentDbName / (tableName + ".dat");
+
+    if (!std::filesystem::exists(metaFilePath)) {
+      std::cerr << "Error: Table metadata file '" << tableName
+                << ".meta' not found." << std::endl;
+      return false;
     }
 
-    bool createTableFileInternal(const std::string& tableName, const std::vector<ColumnDefinition>& columns) {
-        if (currentDbName_.empty()) {
-            std::cerr << "Error: No database selected. Use USE DATABASE first." << std::endl;
-            return false;
-        }
-        std::filesystem::path tableMetaPath = std::filesystem::path(dbPath_) / currentDbName_ / (tableName + ".meta");
-        std::filesystem::path tableDataPath = std::filesystem::path(dbPath_) / currentDbName_ / (tableName + ".dat");
-        std::filesystem::path tableIdxPath = std::filesystem::path(dbPath_) / currentDbName_ / (tableName + ".idx"); // 索引文件
+    outTable.name = tableName;
+    outTable.columns.clear();
+    outTable.rows.clear();
 
-        try {
-            if (std::filesystem::exists(tableMetaPath)) {
-                std::cerr << "Error: Table '" << tableName << "' already exists." << std::endl;
-                return false;
-            }
-            std::ofstream metaFile(tableMetaPath);
-            if (!metaFile.is_open()) {
-                std::cerr << "Error: Could not create metadata file for table '" << tableName << "'." << std::endl;
-                return false;
-            }
-            bool hasPrimaryKey = false;
-            for (const auto& col : columns) {
-                metaFile << col.name << "," << static_cast<int>(col.type) << "," << (col.isPrimaryKey ? "1" : "0") << "\n";
-                if (col.isPrimaryKey) {
-                    if (hasPrimaryKey) {
-                        std::cerr << "Error: Multiple primary keys defined for table '" << tableName << "'." << std::endl;
-                        metaFile.close();
-                        std::filesystem::remove(tableMetaPath);
-                        return false;
-                    }
-                    hasPrimaryKey = true;
-                }
-            }
-            metaFile.close();
+    // 加载元数据
+    std::ifstream metaFile(metaFilePath);
+    std::string line;
+    while (std::getline(metaFile, line)) {
+      std::stringstream ss(line);
+      std::string name, type_str, is_pk_str;
+      std::getline(ss, name, ',');
+      std::getline(ss, type_str, ',');
+      std::getline(ss, is_pk_str);
 
-            if (hasPrimaryKey) {
-                std::ofstream indexFile(tableIdxPath); // 仅创建文件，不写入内容
-                if (!indexFile.is_open()) {
-                    std::cerr << "Warning: Could not create index file for table '" << tableName << "'." << std::endl;
-                }
-            }
-
-            std::ofstream dataFile(tableDataPath); // 创建数据文件
-            if (!dataFile.is_open()) {
-                std::cerr << "Warning: Could not create data file for table '" << tableName << "'." << std::endl;
-            }
-            
-            // 同时在内存中创建 TableData 结构
-            TableData newTable;
-            newTable.tableName = tableName;
-            newTable.columns = columns;
-            tables_[tableName] = newTable; // 添加到内存映射
-
-            std::cout << "Database::Impl: 文件和内存中创建表 '" << tableName << "' 成功。" << std::endl;
-            return true;
-        } catch (const std::filesystem::filesystem_error& e) {
-            std::cerr << "Filesystem error: " << e.what() << std::endl;
-            return false;
-        }
-    }
-
-    bool dropTableFileInternal(const std::string& tableName) {
-        if (currentDbName_.empty()) {
-            std::cerr << "Error: No database selected." << std::endl;
-            return false;
-        }
-        std::filesystem::path dbPath = std::filesystem::path(dbPath_) / currentDbName_;
-        std::filesystem::path tableMetaPath = dbPath / (tableName + ".meta");
-        std::filesystem::path tableIdxPath = dbPath / (tableName + ".idx");
-        std::filesystem::path tableDataPath = dbPath / (tableName + ".dat");
-        try {
-            if (!std::filesystem::exists(tableMetaPath)) {
-                std::cerr << "Error: Table '" << tableName << "' does not exist." << std::endl;
-                return false;
-            }
-            bool success = true;
-            std::cout << "Database::Impl: 正在删除表文件: " << tableName << std::endl;
-            if (std::filesystem::exists(tableMetaPath)) success &= std::filesystem::remove(tableMetaPath);
-            if (std::filesystem::exists(tableDataPath)) success &= std::filesystem::remove(tableDataPath);
-            if (std::filesystem::exists(tableIdxPath)) success &= std::filesystem::remove(tableIdxPath);
-
-            // 同时从内存中移除 TableData 结构
-            tables_.erase(tableName);
-
-            return success;
-        } catch (const std::filesystem::filesystem_error& e) {
-            std::cerr << "Filesystem error: " << e.what() << std::endl;
-            return false;
-        }
-    }
-
-    // alterTableAddColumnInternal (桩实现，DDLOperations.cpp 队友未提供具体实现)
-    bool alterTableAddColumnInternal(const std::string& tableName, const ColumnDefinition& column) {
-        std::cerr << "Warning: alterTableAddColumnInternal not fully implemented in Database.cpp. (Placeholder)" << std::endl;
-        TableData* table = getMutableTableData(tableName);
-        if (!table) {
-            std::cerr << "Error: Table '" << tableName << "' not found in memory for alter operation." << std::endl;
-            return false;
-        }
-        for (const auto& col_def : table->columns) {
-            if (col_def.name == column.name) {
-                std::cerr << "Error: Column '" << column.name << "' already exists in table '" << tableName << "'." << std::endl;
-                return false;
-            }
-        }
-        table->columns.push_back(column);
-        for (Row& row : table->rows) {
-            row.push_back(""); // 添加默认值
-        }
-        std::cout << "Database::Impl: 内存中修改表 '" << tableName << "' 添加列 '" << column.name << "' 成功。(桩实现)" << std::endl;
-        // 实际还需要更新 .meta 文件和 .dat 文件
-        return true;
-    }
-
-
-    // --- DML 内部辅助方法 ---
-    // (这些方法由 DMLOperations::Impl 调用，不直接处理文件 I/O，只操作内存中的 tables_)
-
-    // --- 事务管理内部辅助方法 (桩实现) ---
-    void beginTransactionInternal() {
-        if (inTransaction_) {
-            throw DatabaseException("Cannot start a new transaction, another transaction is already active (ID: " + std::to_string(currentTransactionId_) + ").");
-        }
-        currentTransactionId_ = nextTransactionId_++;
-        inTransaction_ = true;
-        currentTransactionLog_.clear();
-        logOperation(LogEntry(currentTransactionId_, LogEntryType::BEGIN_TRANSACTION));
-        std::cout << "Database::Impl: 事务 " << currentTransactionId_ << " 开始 (桩实现)。" << std::endl;
-    }
-
-    void commitInternal() {
-        if (!inTransaction_) {
-            throw DatabaseException("Cannot commit: No active transaction.");
-        }
-        logOperation(LogEntry(currentTransactionId_, LogEntryType::COMMIT_TRANSACTION));
-        currentTransactionLog_.clear();
-        inTransaction_ = false;
-        std::cout << "Database::Impl: 事务 " << currentTransactionId_ << " 已提交 (桩实现)，日志已清除。" << std::endl;
-        currentTransactionId_ = 0;
-    }
-
-    void rollbackInternal() {
-        if (!inTransaction_) {
-            throw DatabaseException("Cannot rollback: No active transaction.");
-        }
-        logOperation(LogEntry(currentTransactionId_, LogEntryType::ROLLBACK_TRANSACTION));
-
-        std::cout << "Database::Impl: 正在回滚事务 " << currentTransactionId_ << "... (桩实现)" << std::endl;
-        std::reverse(currentTransactionLog_.begin(), currentTransactionLog_.end());
-        for (const auto& entry : currentTransactionLog_) {
-            std::cout << "  - 回滚日志条目 (桩实现) - Type: " << static_cast<int>(entry.type) << ", Table: " << entry.tableName << std::endl;
-            TableData* table = getMutableTableData(entry.tableName);
-            if (table) {
-                if (entry.type == LogEntryType::INSERT) {
-                    auto it = std::find(table->rows.begin(), table->rows.end(), entry.newRowValues);
-                    if (it != table->rows.end()) {
-                        table->rows.erase(it);
-                    }
-                } else if (entry.type == LogEntryType::DELETE) {
-                    table->rows.push_back(entry.oldRowValues);
-                } else if (entry.type == LogEntryType::UPDATE_OLD_VALUE) {
-                    if (entry.rowIndex != -1 && entry.rowIndex < table->rows.size()) {
-                        table->rows[entry.rowIndex] = entry.oldRowValues;
-                    }
-                }
-            }
-        }
-        currentTransactionLog_.clear();
-        inTransaction_ = false;
-        std::cout << "Database::Impl: 事务 " << currentTransactionId_ << " 已回滚 (桩实现)，日志已清除。" << std::endl;
-        currentTransactionId_ = 0;
-    }
-
-    void logOperation(const LogEntry& entry) {
-        if (inTransaction_) {
-            currentTransactionLog_.push_back(entry);
-        }
-    }
-
-
-    // --- 权限控制内部辅助方法 ---
-
-    // 从文件加载用户和权限 (桩实现)
-    void loadUsersAndPermissions() {
-        std::cout << "Database::Impl: 加载用户和权限 (桩实现)。" << std::endl;
-        // 可以在这里实现从文件加载用户和权限的逻辑
-    }
-
-    // 将用户和权限保存到文件 (桩实现)
-    void saveUsersAndPermissions() {
-        std::cout << "Database::Impl: 保存用户和权限 (桩实现)。" << std::endl;
-    }
-
-    bool authenticateInternal(const std::string& username, const std::string& password) {
-        auto it = users_.find(username);
-        if (it != users_.end()) {
-            return it->second.passwordHash == password;
-        }
+      DataType type;
+      // 假设 DataType 的 int 值与实际一致
+      int type_int = std::stoi(type_str);
+      if (type_int == static_cast<int>(DataType::INT))
+        type = DataType::INT;
+      else if (type_int == static_cast<int>(DataType::DOUBLE))
+        type = DataType::DOUBLE;
+      else if (type_int == static_cast<int>(DataType::STRING))
+        type = DataType::STRING;
+      else if (type_int == static_cast<int>(DataType::BOOL))
+        type = DataType::BOOL;
+      else {
+        std::cerr << "Error: Unknown data type in meta file: " << type_str
+                  << std::endl;
         return false;
+      }
+      bool is_pk = (is_pk_str == "1");
+      outTable.columns.emplace_back(name, type, is_pk);
+    }
+    metaFile.close();
+
+    // 加载数据
+    if (std::filesystem::exists(dataFilePath)) {
+      std::ifstream dataFile(dataFilePath);
+      while (std::getline(dataFile, line)) {
+        if (line.empty())
+          continue; // 跳过空行
+        Row row;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, ',')) {
+          row.push_back(cell);
+        }
+        outTable.rows.push_back(row);
+      }
+      dataFile.close();
     }
 
-    bool checkPermissionInternal(const std::string& username, PermissionType permission, const std::string& objectType, const std::string& objectName = "") {
-        if (username.empty()) {
-            return false;
-        }
+    std::cout << "Table '" << tableName << "' loaded from files." << std::endl;
+    return true;
+  }
 
-        for (const auto& entry : permissions_) {
-            if (entry.username == username &&
-                entry.permission == permission &&
-                entry.objectType == objectType) {
-                
-                if (!objectName.empty()) {
-                    if (entry.objectName == objectName) { // 精确匹配
-                         return true; 
-                    }
-                } else { // 如果 objectName 为空，表示对该类型的所有对象都有权限
-                    return true;
-                }
-            }
-        }
+  // 认证用户
+  bool authenticateInternal(const std::string &username,
+                            const std::string &password) {
+    auto it = users_.find(username);
+    if (it != users_.end()) {
+      // 简单哈希模拟，实际应使用更安全的哈希算法
+      std::string hashedPassword = password + "_hashed"; // 模拟哈希
+      return it->second.hashedPassword == hashedPassword;
+    }
+    return false;
+  }
+
+  // 检查用户权限
+  bool checkPermissionInternal(const std::string &username,
+                               PermissionType permission,
+                               const std::string &objectType,
+                               const std::string &objectName = "") {
+    if (username.empty()) {
+      std::cerr << "Error: No user logged in to check permissions."
+                << std::endl;
+      return false;
+    }
+
+    // 默认管理员拥有所有权限（简化处理）
+    if (username == "admin") {
+      return true;
+    }
+
+    auto it = users_.find(username);
+    if (it != users_.end()) {
+      return it->second.hasPermission(permission, objectType, objectName);
+    }
+    std::cerr << "Error: User '" << username
+              << "' not found for permission check." << std::endl;
+    return false;
+  }
+
+  // 创建用户
+  bool createUserInternal(const std::string &username,
+                          const std::string &password) {
+    if (users_.count(username)) {
+      std::cerr << "Error: User '" << username << "' already exists."
+                << std::endl;
+      return false;
+    }
+    User newUser;
+    newUser.username = username;
+    newUser.hashedPassword = password + "_hashed"; // 模拟哈希
+    // 默认不赋予任何权限，需通过 grantPermissionInternal 赋予
+    users_[username] = newUser;
+    saveUsers(); // 及时保存用户数据
+    std::cout << "User '" << username << "' created." << std::endl;
+    return true;
+  }
+
+  // 删除用户
+  bool dropUserInternal(const std::string &username) {
+    if (username == "admin") {
+      std::cerr << "Error: Cannot delete default admin user." << std::endl;
+      return false;
+    }
+    if (!users_.count(username)) {
+      std::cerr << "Error: User '" << username << "' does not exist."
+                << std::endl;
+      return false;
+    }
+    users_.erase(username);
+    saveUsers(); // 及时保存用户数据
+    // 如果删除的是当前登录用户，则强制登出
+    if (currentUser_ == username) {
+      currentUser_.clear();
+      std::cout << "Current user '" << username
+                << "' logged out due to deletion." << std::endl;
+    }
+    std::cout << "User '" << username << "' deleted." << std::endl;
+    return true;
+  }
+
+  // 授予权限
+  bool grantPermissionInternal(const std::string &username,
+                               PermissionType permission,
+                               const std::string &objectType,
+                               const std::string &objectName = "") {
+    auto it = users_.find(username);
+    if (it == users_.end()) {
+      std::cerr << "Error: User '" << username
+                << "' not found to grant permission." << std::endl;
+      return false;
+    }
+    User &user = it->second;
+    PermissionEntry newPerm{permission, objectType, objectName};
+    // 检查是否已存在该权限
+    if (std::find(user.permissions.begin(), user.permissions.end(), newPerm) ==
+        user.permissions.end()) {
+      user.permissions.push_back(newPerm);
+      saveUsers();
+      std::cout << "Permission granted to user '" << username << "'."
+                << std::endl;
+      return true;
+    }
+    std::cerr << "Warning: Permission already exists for user '" << username
+              << "'." << std::endl;
+    return false;
+  }
+
+  // 撤销权限
+  bool revokePermissionInternal(const std::string &username,
+                                PermissionType permission,
+                                const std::string &objectType,
+                                const std::string &objectName) {
+    auto it = users_.find(username);
+    if (it == users_.end()) {
+      std::cerr << "Error: User '" << username
+                << "' not found to revoke permission." << std::endl;
+      return false;
+    }
+    User &user = it->second;
+    PermissionEntry targetPerm{permission, objectType, objectName};
+    auto remove_it = std::remove_if(
+        user.permissions.begin(), user.permissions.end(),
+        [&](const PermissionEntry &p) { return p == targetPerm; });
+    if (remove_it != user.permissions.end()) {
+      user.permissions.erase(remove_it, user.permissions.end());
+      saveUsers();
+      std::cout << "Permission revoked from user '" << username << "'."
+                << std::endl;
+      return true;
+    }
+    std::cerr << "Warning: Permission not found for user '" << username
+              << "' to revoke." << std::endl;
+    return false;
+  }
+
+  // 获取当前用户
+  const std::string &getCurrentUser() const { return currentUser_; }
+
+  // 设置当前用户
+  void setCurrentUser(const std::string &username) { currentUser_ = username; }
+
+  // 记录操作到事务日志
+  void logOperation(const LogEntry &entry) {
+    if (!isTransactionActive) {
+      std::cerr << "Error: Cannot log operation. No transaction is active."
+                << std::endl;
+      return;
+    }
+    std::ofstream logFile(transactionLogPath, std::ios::app);
+    if (!logFile.is_open()) {
+      std::cerr << "Error: Could not open transaction log file for logging."
+                << std::endl;
+      return;
+    }
+
+    logFile << entry.transactionId << ";";
+    // 写入操作类型
+    if (entry.type == LogEntryType::INSERT)
+      logFile << "INSERT;";
+    else if (entry.type == LogEntryType::UPDATE_OLD_VALUE)
+      logFile << "UPDATE;";
+    else if (entry.type == LogEntryType::DELETE)
+      logFile << "DELETE;";
+    else
+      logFile << "UNKNOWN;";
+
+    logFile << entry.tableName << ";";
+
+    // 写入旧行数据 (UPDATE 和 DELETE)
+    for (size_t i = 0; i < entry.oldRow.size(); ++i) {
+      logFile << entry.oldRow[i];
+      if (i < entry.oldRow.size() - 1)
+        logFile << ",";
+    }
+    logFile << ";";
+
+    // 写入新行数据 (INSERT 和 UPDATE)
+    for (size_t i = 0; i < entry.newRow.size(); ++i) {
+      logFile << entry.newRow[i];
+      if (i < entry.newRow.size() - 1)
+        logFile << ",";
+    }
+    logFile << ";";
+
+    // 写入行索引 (UPDATE)
+    logFile << entry.rowIndex << "\n";
+
+    logFile.close();
+    std::cout << "Operation logged to transaction log: "
+              << static_cast<int>(entry.type) << " on table " << entry.tableName
+              << std::endl;
+  }
+
+  // 从日志中应用单条操作 (在 commit 时调用)
+  bool applyLogEntryInternal(const LogEntry &entry) {
+    TableData *table = getMutableTableData(entry.tableName);
+    if (!table) {
+      std::cerr << "Error: Cannot apply log entry, table '" << entry.tableName
+                << "' not found." << std::endl;
+      return false;
+    }
+
+    if (entry.type == LogEntryType::INSERT) {
+      table->rows.push_back(entry.newRow);
+      std::cout << "Applied INSERT from log to table '" << entry.tableName
+                << "'." << std::endl;
+    } else if (entry.type == LogEntryType::UPDATE_OLD_VALUE) {
+      // 寻找要更新的行。简化实现：根据旧行内容找到并更新。
+      // 实际可能需要一个主键或行号来精准定位。
+      // 目前 DML::update 已经通过 rowIndex 提供了索引，这里使用它
+      if (entry.rowIndex != -1 && entry.rowIndex < table->rows.size()) {
+        table->rows[entry.rowIndex] = entry.newRow;
+        std::cout << "Applied UPDATE from log to table '" << entry.tableName
+                  << "' at index " << entry.rowIndex << "." << std::endl;
+      } else {
+        std::cerr << "Error: Cannot apply UPDATE from log, invalid row index "
+                     "or row not found for table '"
+                  << entry.tableName << "'." << std::endl;
         return false;
-    }
-
-    bool createUserInternal(const std::string& username, const std::string& password) {
-        if (users_.count(username)) {
-            std::cerr << "错误: 用户 '" << username << "' 已存在。" << std::endl;
-            return false;
-        }
-        User newUser;
-        newUser.username = username;
-        newUser.passwordHash = password;
-        users_[username] = newUser;
-        std::cout << "Database::Impl: 内部创建用户 '" << username << "' 成功。" << std::endl;
-        return true;
-    }
-
-    bool dropUserInternal(const std::string& username) {
-        if (username == currentUser_) {
-            std::cerr << "错误: 无法删除当前登录用户 '" << username << "'。" << std::endl;
-            return false;
-        }
-        if (users_.erase(username) > 0) {
-            permissions_.erase(std::remove_if(permissions_.begin(), permissions_.end(),
-                                               [&](const PermissionEntry& entry){
-                                                   return entry.username == username;
-                                               }),
-                               permissions_.end());
-            std::cout << "Database::Impl: 内部删除用户 '" << username << "' 及其所有权限成功。" << std::endl;
-            return true;
-        }
-        std::cerr << "错误: 删除用户 '" << username << "' 失败，用户不存在。" << std::endl;
+      }
+    } else if (entry.type == LogEntryType::DELETE) {
+      // 寻找要删除的行。简化实现：根据旧行内容找到并删除。
+      auto it = std::remove_if(table->rows.begin(), table->rows.end(),
+                               [&](const Row &r) { return r == entry.oldRow; });
+      if (it != table->rows.end()) {
+        table->rows.erase(it, table->rows.end());
+        std::cout << "Applied DELETE from log to table '" << entry.tableName
+                  << "'." << std::endl;
+      } else {
+        std::cerr
+            << "Error: Cannot apply DELETE from log, row not found for table '"
+            << entry.tableName << "'." << std::endl;
         return false;
+      }
+    } else {
+      std::cerr << "Error: Unknown log entry type." << std::endl;
+      return false;
+    }
+    // 成功应用后，将修改后的表数据保存到文件
+    return saveTableToFile(entry.tableName);
+  }
+
+private:
+  // 将用户数据持久化到文件
+  bool saveUsers() {
+    std::filesystem::path usersFilePath =
+        std::filesystem::path(rootPath) / "users.meta";
+    std::ofstream outFile(usersFilePath);
+    if (!outFile.is_open()) {
+      std::cerr << "Error: Could not open users file for writing: "
+                << usersFilePath << std::endl;
+      return false;
     }
 
-    bool grantPermissionInternal(const std::string& username, PermissionType permission, const std::string& objectType, const std::string& objectName = "") {
-        if (users_.find(username) == users_.end()) {
-            std::cerr << "错误: 授予权限失败，用户 '" << username << "' 不存在。" << std::endl;
-            return false;
-        }
+    for (const auto &pair : users_) {
+      const User &user = pair.second;
+      outFile << "USER:" << user.username << ":" << user.hashedPassword << "\n";
+      for (const auto &perm : user.permissions) {
+        outFile << "PERM:" << static_cast<int>(perm.type) << ":"
+                << perm.objectType << ":" << perm.objectName << "\n";
+      }
+    }
+    outFile.close();
+    std::cout << "Users data saved." << std::endl;
+    return true;
+  }
 
-        for (const auto& entry : permissions_) {
-            if (entry.username == username && entry.permission == permission &&
-                entry.objectType == objectType && entry.objectName == objectName) {
-                std::cerr << "警告: 权限已存在，无需重复授予。" << std::endl;
-                return true;
-            }
-        }
-
-        PermissionEntry newEntry;
-        newEntry.username = username;
-        newEntry.permission = permission;
-        newEntry.objectType = objectType;
-        newEntry.objectName = objectName;
-        permissions_.push_back(newEntry);
-        std::cout << "Database::Impl: 内部授予用户 '" << username << "' 权限成功。" << std::endl;
-        return true;
+  // 从文件加载用户数据
+  bool loadUsers() {
+    std::filesystem::path usersFilePath =
+        std::filesystem::path(rootPath) / "users.meta";
+    if (!std::filesystem::exists(usersFilePath)) {
+      std::cout << "Users file not found. Starting with no users." << std::endl;
+      return false;
     }
 
-    bool revokePermissionInternal(const std::string& username, PermissionType permission, const std::string& objectType, const std::string& objectName = "") {
-        auto initialSize = permissions_.size();
-        permissions_.erase(std::remove_if(permissions_.begin(), permissions_.end(),
-                                           [&](const PermissionEntry& entry){
-                                               return entry.username == username &&
-                                                      entry.permission == permission &&
-                                                      entry.objectType == objectType &&
-                                                      entry.objectName == objectName;
-                                           }),
-                           permissions_.end());
-        if (permissions_.size() < initialSize) {
-            std::cout << "Database::Impl: 内部撤销用户 '" << username << "' 权限成功。" << std::endl;
-            return true;
-        }
-        std::cerr << "错误: 撤销权限失败，权限不存在或用户不存在。" << std::endl;
-        return false;
+    std::ifstream inFile(usersFilePath);
+    if (!inFile.is_open()) {
+      std::cerr << "Error: Could not open users file for reading: "
+                << usersFilePath << std::endl;
+      return false;
     }
 
-    const std::string& getCurrentUser() const { return currentUser_; }
-    void setCurrentUser(const std::string& username) { currentUser_ = username; }
+    std::string line;
+    User *currentUser = nullptr;
+    while (std::getline(inFile, line)) {
+      std::stringstream ss(line);
+      std::string type;
+      std::getline(ss, type, ':');
+
+      if (type == "USER") {
+        std::string username, hashedPassword;
+        std::getline(ss, username, ':');
+        std::getline(ss, hashedPassword);
+        users_[username] = User{username, hashedPassword};
+        currentUser = &users_[username];
+      } else if (type == "PERM" && currentUser) {
+        std::string perm_type_str, obj_type, obj_name;
+        std::getline(ss, perm_type_str, ':');
+        std::getline(ss, obj_type, ':');
+        std::getline(ss, obj_name);
+
+        PermissionType p_type =
+            static_cast<PermissionType>(std::stoi(perm_type_str));
+        currentUser->permissions.push_back({p_type, obj_type, obj_name});
+      }
+    }
+    inFile.close();
+    std::cout << "Users data loaded." << std::endl;
+    return true;
+  }
 };
 
-// =======================================================================
-// --- DDLOperations 类的公共接口实现 (转发到 Pimpl Impl) ---
-// =======================================================================
-// DDLOperations 类的构造函数和析构函数实现
-DDLOperations::DDLOperations(Database::Impl* db_core_impl) : pImpl(std::make_unique<Impl>(db_core_impl)) {}
-DDLOperations::~DDLOperations() = default;
+// ========================================================================
+// Database 公共接口的实现
+// ========================================================================
 
-// DDLOperations 公开接口的实现，将调用转发给 pImpl 对象
-bool DDLOperations::createDatabase(const std::string& dbName) {
-    return pImpl->createDatabase(dbName);
+Database::Database(const std::string &dbPath)
+    : pImpl(std::make_unique<Impl>(dbPath)) {
+  // 使用 pImpl 中的内部实现来构造公开的操作类
+  ddl_ops =
+      std::make_unique<DDLOperations>(pImpl->ddl_impl_.get()); // 传递裸指针
+  dml_ops = std::make_unique<DMLOperations>(pImpl->dml_impl_.get()); // 新增
+  tx_manager =
+      std::make_unique<TransactionManager>(pImpl->tx_impl_.get()); // 传递裸指针
+  ac_manager = std::make_unique<AccessControl>(pImpl->ac_impl_.get()); // 新增
 }
 
-bool DDLOperations::dropDatabase(const std::string& dbName) {
-    return pImpl->dropDatabase(dbName);
+Database::~Database() = default;
+
+DDLOperations &Database::getDDLOperations() { return *ddl_ops; }
+
+DMLOperations &Database::getDMLOperations() {
+  return *dml_ops; // 已修改
 }
 
-bool DDLOperations::useDatabase(const std::string& dbName) {
-    return pImpl->useDatabase(dbName);
+TransactionManager &Database::getTransactionManager() { return *tx_manager; }
+
+AccessControl &Database::getAccessControl() {
+  return *ac_manager; // 已修改
 }
-
-bool DDLOperations::createTable(const std::string& tableName, const std::vector<ColumnDefinition>& columns) {
-    return pImpl->createTable(tableName, columns);
-}
-
-bool DDLOperations::dropTable(const std::string& tableName) {
-    return pImpl->dropTable(tableName);
-}
-// DDLOperations.cpp 队友未提供 alterTableAddColumn 的 Impl 实现，所以这里暂时不转发
-// 如果 DDLOperations 后面会实现 alterTableAddColumn，这里也要添加转发
-// bool DDLOperations::alterTableAddColumn(const std::string& tableName, const ColumnDefinition& column) {
-//     return pImpl->alterTableAddColumn(tableName, column);
-// }
-
-
-// =======================================================================
-// --- TransactionManager 类的公共接口实现 (桩实现) ---
-// =======================================================================
-// TransactionManager 类的构造函数和析构函数实现
-TransactionManager::TransactionManager(Database::Impl* db_core_impl) : pImpl(std::make_unique<Impl>(db_core_impl)) {}
-TransactionManager::~TransactionManager() = default;
-void TransactionManager::beginTransaction() { pImpl->beginTransaction(); }
-void TransactionManager::commit() { pImpl->commit(); }
-void TransactionManager::rollback() { pImpl->rollback(); }
-
-
-// =======================================================================
-// --- AccessControl 类的公共接口实现 (转发到 Pimpl Impl) ---
-// =======================================================================
-// AccessControl 类的构造函数和析构函数实现
-AccessControl::AccessControl(Database::Impl* db_core_impl) : pImpl(std::make_unique<Impl>(db_core_impl)) {}
-AccessControl::~AccessControl() = default;
-bool AccessControl::login(const std::string& username, const std::string& password) { return pImpl->login(username, password); }
-bool AccessControl::logout() { return pImpl->logout(); }
-bool AccessControl::createUser(const std::string& username, const std::string& password) { return pImpl->createUser(username, password); }
-bool AccessControl::dropUser(const std::string& username) { return pImpl->dropUser(username); }
-bool AccessControl::grantPermission(const std::string& username, PermissionType permission, const std::string& objectType, const std::string& objectName) { return pImpl->grantPermission(username, permission, objectType, objectName); }
-bool AccessControl::revokePermission(const std::string& username, PermissionType permission, const std::string& objectType, const std::string& objectName) { return pImpl->revokePermission(username, permission, objectType, objectName); }
-
-
-// =======================================================================
-// --- Database 类公共接口的实现 ---
-// =======================================================================
-Database::Database(const std::string& dbPath) : pImpl(std::make_unique<Impl>(dbPath)) {
-    // 初始化各个操作模块，并传入指向核心Impl的指针
-    ddl_ops = std::make_unique<DDLOperations>(pImpl.get());
-    dml_ops = std::make_unique<DMLOperations>(pImpl.get());
-    tx_manager = std::make_unique<TransactionManager>(pImpl.get());
-    ac_manager = std::make_unique<AccessControl>(pImpl.get());
-}
-
-Database::~Database() = default; // unique_ptr 会自动调用 Impl 的析构函数
-
-DDLOperations& Database::getDDLOperations() { return *ddl_ops; }
-DMLOperations& Database::getDMLOperations() { return *dml_ops; }
-TransactionManager& Database::getTransactionManager() { return *tx_manager; }
-AccessControl& Database::getAccessControl() { return *ac_manager; }
