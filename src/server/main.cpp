@@ -104,73 +104,73 @@
 //     // --- 3. 测试 DML (数据操作语言) 操作 ---
 //     std::cout << "\n--- Testing DML Operations ---" << std::endl;
 
-//     // 插入数据
-//     std::cout << "\n--- 插入数据到 '" << tableName1 << "' ---" << std::endl;
-//     std::map<std::string, std::string> student1 = {{"id", "101"},
-//                                                    {"name", "Alice"},
-//                                                    {"age", "18"},
-//                                                    {"grade", "A"},
-//                                                    {"is_active", "true"}};
-//     if (dml_ops.insert(tableName1, student1)) {
-//       std::cout << "插入 Alice 成功。" << std::endl;
-//       printTestResult("Insert Alice", true);
-//     } else {
-//       std::cerr << "错误：插入 Alice 失败。" << std::endl;
-//       printTestResult("Insert Alice", false);
-//     }
+    // 插入数据
+    std::cout << "\n--- 插入数据到 '" << tableName1 << "' ---" << std::endl;
+    std::map<std::string, std::string> student1 = {{"id", "101"},
+                                                   {"name", "Alice"},
+                                                   {"age", "18"},
+                                                   {"grade", "A"},
+                                                   {"is_active", "true"}};
+    if (dml_ops.insert(tableName1, student1)) {
+      std::cout << "插入 Alice 成功。" << std::endl;
+      printTestResult("Insert Alice", true);
+    } else {
+      std::cerr << "错误：插入 Alice 失败。" << std::endl;
+      printTestResult("Insert Alice", false);
+    }
 
-//     std::map<std::string, std::string> student2 = {{"id", "102"},
-//                                                    {"name", "Bob"},
-//                                                    {"age", "19"},
-//                                                    {"grade", "B"},
-//                                                    {"is_active", "false"}};
-//     if (dml_ops.insert(tableName1, student2)) {
-//       std::cout << "插入 Bob 成功。" << std::endl;
-//       printTestResult("Insert Bob", true);
-//     } else {
-//       std::cerr << "错误：插入 Bob 失败。" << std::endl;
-//       printTestResult("Insert Bob", false);
-//     }
+    std::map<std::string, std::string> student2 = {{"id", "102"},
+                                                   {"name", "Bob"},
+                                                   {"age", "19"},
+                                                   {"grade", "B"},
+                                                   {"is_active", "false"}};
+    if (dml_ops.insert(tableName1, student2)) {
+      std::cout << "插入 Bob 成功。" << std::endl;
+      printTestResult("Insert Bob", true);
+    } else {
+      std::cerr << "错误：插入 Bob 失败。" << std::endl;
+      printTestResult("Insert Bob", false);
+    }
 
-//     std::map<std::string, std::string> student3 = {{"id", "103"},
-//                                                    {"name", "Charlie"},
-//                                                    {"age", "18"},
-//                                                    {"grade", "A"},
-//                                                    {"is_active", "true"}};
-//     if (dml_ops.insert(tableName1, student3)) {
-//       std::cout << "插入 Charlie 成功。" << std::endl;
-//       printTestResult("Insert Charlie", true);
-//     } else {
-//       std::cerr << "错误：插入 Charlie 失败。" << std::endl;
-//       printTestResult("Insert Charlie", false);
-//     }
+    std::map<std::string, std::string> student3 = {{"id", "103"},
+                                                   {"name", "Charlie"},
+                                                   {"age", "18"},
+                                                   {"grade", "A"},
+                                                   {"is_active", "true"}};
+    if (dml_ops.insert(tableName1, student3)) {
+      std::cout << "插入 Charlie 成功。" << std::endl;
+      printTestResult("Insert Charlie", true);
+    } else {
+      std::cerr << "错误：插入 Charlie 失败。" << std::endl;
+      printTestResult("Insert Charlie", false);
+    }
 
-//     // 尝试插入重复主键
-//     std::map<std::string, std::string> student_dup = {
-//         {"id", "101"}, {"name", "Eve"}, {"age", "20"}, {"grade", "C"}};
-//     bool dup_insert_res = dml_ops.insert(tableName1, student_dup) == 0;
-//     printTestResult("Insert duplicate primary key (id=101)", dup_insert_res);
+    // 尝试插入重复主键
+    std::map<std::string, std::string> student_dup = {
+        {"id", "101"}, {"name", "Eve"}, {"age", "20"}, {"grade", "C"}};
+    bool dup_insert_res = dml_ops.insert(tableName1, student_dup) == 0;
+    printTestResult("Insert duplicate primary key (id=101)", dup_insert_res);
 
-//     // 查询所有数据
-//     std::cout << "\n--- 查询所有学生 ---" << std::endl;
-//     auto allStudents = dml_ops.select(tableName1);
-//     printQueryResult(allStudents);
-//     printTestResult("Select all students",
-//                     allStudents && allStudents->getRowCount() == 3);
+    // 查询所有数据
+    std::cout << "\n--- 查询所有学生 ---" << std::endl;
+    auto allStudents = dml_ops.select(tableName1);
+    printQueryResult(allStudents);
+    printTestResult("Select all students",
+                    allStudents && allStudents->getRowCount() == 3);
 
-//     // 带条件查询
-//     std::cout << "\n--- 查询 age = 18 且 grade = 'A' 的学生 ---" << std::endl;
-//     auto filteredStudents =
-//         dml_ops.select(tableName1, "age = 18 AND grade = 'A'");
-//     printQueryResult(filteredStudents);
-//     printTestResult("Select students with age=18 AND grade=A",
-//                     filteredStudents && filteredStudents->getRowCount() == 2);
+    // 带条件查询
+    std::cout << "\n--- 查询 age = 18 且 grade = 'A' 的学生 ---" << std::endl;
+    auto filteredStudents =
+        dml_ops.select(tableName1, "age = 18 AND grade = 'A'");
+    printQueryResult(filteredStudents);
+    printTestResult("Select students with age=18 AND grade=A",
+                    filteredStudents && filteredStudents->getRowCount() == 2);
 
-//     std::cout << "\n--- 查询 is_active = true 的学生 ---" << std::endl;
-//     auto activeStudents = dml_ops.select(tableName1, "is_active = 'true'");
-//     printQueryResult(activeStudents);
-//     printTestResult("Select active students",
-//                     activeStudents && activeStudents->getRowCount() == 2);
+    std::cout << "\n--- 查询 is_active = true 的学生 ---" << std::endl;
+    auto activeStudents = dml_ops.select(tableName1, "is_active = 'true'");
+    printQueryResult(activeStudents);
+    printTestResult("Select active students",
+                    activeStudents && activeStudents->getRowCount() == 2);
 
 //     // 带排序查询
 //     std::cout << "\n--- 查询所有学生并按 age 排序 ---" << std::endl;
@@ -202,11 +202,11 @@
 //     printTestResult("Remove students with age < 20",
 //                     removedRows == 2); // Alice and Charlie should be deleted
 
-//     std::cout << "\n--- 再次查询所有学生以验证删除 ---" << std::endl;
-//     allStudents = dml_ops.select(tableName1);
-//     printQueryResult(allStudents);
-//     printTestResult("Select all students after removal",
-//                     allStudents && allStudents->getRowCount() == 1);
+    std::cout << "\n--- 再次查询所有学生以验证删除 ---" << std::endl;
+    allStudents = dml_ops.select(tableName1);
+    printQueryResult(allStudents);
+    printTestResult("Select all students after removal",
+                    allStudents && allStudents->getRowCount() == 1);
 
 //     // --- 4. 测试 TransactionManager (事务管理) 操作 ---
 //     std::cout << "\n--- Testing Transaction Manager ---" << std::endl;
@@ -283,5 +283,5 @@
 //   std::cout << "\n--- All tests finished. Check logs for PASSED/FAILED. ---"
 //             << std::endl;
 
-//   return 0;
-// }
+  return 0;
+}

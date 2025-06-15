@@ -268,6 +268,16 @@ public:
              const std::map<std::string, std::string> &values);
 
   /**
+   * @brief 向表中插入一条记录，按照列的索引顺序提供值。
+   * 如果提供的值的数量少于表的列数，则剩余列将使用默认值。
+   * @param tableName 要插入记录的表的名称。
+   * @param values_by_index 值的向量，按照表中列的定义顺序排列。
+   * @return 成功插入的行数（通常为1），如果失败则返回0。
+   */
+  int insert(const std::string &tableName,
+             const std::vector<std::string> &values_by_index);
+
+  /**
    * @brief 更新表中符合条件的记录。
    * @param tableName 要更新记录的表的名称。
    * @param updates 键值对，表示要更新的列名及其新值。

@@ -1,11 +1,11 @@
-#include "../../include/server/DatabaseAPI.hpp"
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <sstream> // For std::stringstream
-#include <stdexcept>
+#include "../../include/server/DatabaseAPI.hpp" // 包含数据库API头文件
+#include <filesystem>                           // 用于文件和目录操作
+#include <fstream>                              // 用于文件读写
+#include <iostream>  // 用于在控制台打印信息
+#include <sstream>   // 用于 std::stringstream
+#include <stdexcept> // 用于抛出异常
 
-// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义。
+// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义。不需要在这里重复定义。
 
 /**
  * @brief TransactionManager的内部实现类 (Pimpl)。
@@ -67,17 +67,7 @@ public:
 
     std::cout << "Committing transaction..." << std::endl;
 
-    // 1. 打开日志文件用于读取
-    std::ifstream logFile(core_impl_->transactionLogPath);
-    if (!logFile.is_open()) {
-      std::cerr << "Error: Could not open transaction log. Rolling back."
-                << std::endl;
-      rollback(); // 日志文件是核心，打不开必须回滚
-      return;
-    }
-
-    // ** 核心修复：现在 commit 不再“重放”日志，而是将内存中的当前状态持久化 **
-    // 2. 将内存中的所有表数据写回文件
+    // ** 核心修复：将内存中的所有表数据写回文件 **
     std::filesystem::path dbPath =
         std::filesystem::path(core_impl_->rootPath) / core_impl_->currentDbName;
     bool all_operations_successful = true;
@@ -107,7 +97,6 @@ public:
         break; // 停止处理后续表
       }
     }
-    logFile.close(); // 关闭日志文件，即使它没有被逐行处理
 
     // 3. 如果所有操作都成功，才算提交成功
     if (all_operations_successful) {
