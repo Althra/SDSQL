@@ -257,6 +257,17 @@ void CliApp::handle_insert(const InsertCommand& cmd) {
     
     std::cout << "Inserting into table '" << cmd.table_name << "' in database '" << current_database << "':" << std::endl;
     
+    if (cmd.columns.has_value()) {
+        std::cout << "  Columns: (";
+        for (size_t i = 0; i < cmd.columns->size(); ++i) {
+            std::cout << cmd.columns->at(i);
+            if (i < cmd.columns->size() - 1) {
+                std::cout << ", ";
+            }
+        }
+        std::cout << ")" << std::endl;
+    }
+
     // 显示要插入的值
     std::cout << "  Values: (";
     for (size_t i = 0; i < cmd.values.size(); ++i) {

@@ -29,7 +29,11 @@ struct ColumnDef { std::string name; TokenType type; bool is_primary = false; };
 struct CreateTableCommand : public Command { std::string table_name; std::vector<ColumnDef> columns; };
 
 // DML 命令
-struct InsertCommand : public Command { std::string table_name; std::vector<LiteralValue> values; };
+struct InsertCommand : public Command { 
+    std::string table_name; 
+    std::optional<std::vector<std::string>> columns;
+    std::vector<LiteralValue> values; 
+};
 struct DeleteCommand : public Command { std::string table_name; std::optional<WhereClause> where_clause; };
 
 struct SetClause { std::string column; LiteralValue value; };
