@@ -350,12 +350,8 @@ QueryRequest QueryBuilder::buildDelete(const DeleteCommand& cmd) {
 // 类型转换辅助函数
 DataType QueryBuilder::convertTokenType(TokenType token_type) {
     switch (token_type) {
-        case TokenType::KEYWORD_INT:
-            return DataType::INT;
-        case TokenType::KEYWORD_STRING:
-            return DataType::STRING;
         case TokenType::NUMERIC_LITERAL:
-            return DataType::DOUBLE;
+            return DataType::INT;
         case TokenType::STRING_LITERAL:
             return DataType::STRING;
         default:

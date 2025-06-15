@@ -81,13 +81,32 @@ std::unique_ptr<Command> Parser::parse_insert() {
     auto cmd = std::make_unique<InsertCommand>();
     consume(TokenType::KEYWORD_INSERT);
     consume(TokenType::KEYWORD_INTO);
+
     cmd->table_name = consume(TokenType::IDENTIFIER).value;
+
+    if (peek().type == TokenType::PAREN_OPEN) {  // 如果有括号，则解析列名
+        consume(TokenType::PAREN_OPEN);
+
+        // 初始化columns向量
+        cmd->columns = std::vector<std::string>();
+
+        do {
+            const Token& column_token = consume(TokenType::IDENTIFIER);
+            cmd->columns->push_back(column_token.value);  // 添加列名到命令对象
+
+        } while (peek().type == TokenType::COMMA && consume(TokenType::COMMA).type == TokenType::COMMA);
+
+        consume(TokenType::PAREN_CLOSE);
+    }
+
     consume(TokenType::KEYWORD_VALUES);
     consume(TokenType::PAREN_OPEN);
+
     do {
         const auto& token = peek();
         cmd->values.push_back({token.type, consume(token.type).value});
     } while (peek().type == TokenType::COMMA && consume(TokenType::COMMA).type == TokenType::COMMA);
+
     consume(TokenType::PAREN_CLOSE);
     return cmd;
 }
