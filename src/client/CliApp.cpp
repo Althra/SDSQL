@@ -209,7 +209,7 @@ void CliApp::handle_use_database(const UseDatabaseCommand& cmd) {
 void CliApp::handle_create_table(const CreateTableCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
         return;
     }
     
@@ -233,7 +233,7 @@ void CliApp::handle_create_table(const CreateTableCommand& cmd) {
 void CliApp::handle_drop_table(const DropTableCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
         return;
     }
     
@@ -251,7 +251,7 @@ void CliApp::handle_drop_table(const DropTableCommand& cmd) {
 void CliApp::handle_insert(const InsertCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
         return;
     }
     
@@ -289,7 +289,7 @@ void CliApp::handle_insert(const InsertCommand& cmd) {
 void CliApp::handle_select(const SelectCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
         return;
     }
     
@@ -323,7 +323,7 @@ void CliApp::handle_select(const SelectCommand& cmd) {
 void CliApp::handle_update(const UpdateCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
         return;
     }
     
@@ -356,7 +356,7 @@ void CliApp::handle_update(const UpdateCommand& cmd) {
 void CliApp::handle_delete(const DeleteCommand& cmd) {
     // --- 执行前检查数据库上下文 ---
     if (current_database.empty()) {
-        std::cerr << "Error: No database selected. Use 'USE <database_name>;' first." << std::endl;
+        std::cerr << "Error: No database selected. Use 'USE DATABASE <database_name>;' first." << std::endl;
         return;
     }
     
