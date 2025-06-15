@@ -32,6 +32,7 @@ void CliApp::run() {
         if (!std::getline(std::cin, line) || line == "exit" || line == "quit") break;
         execute(line);
     }
+    logout();
     std::cout << "\nGoodbye!" << std::endl;
 }
 
@@ -156,9 +157,16 @@ void CliApp::handle_delete(const DeleteCommand& cmd) {
 }
 
 // --- 登录和登出功能 ---
-int CliApp::login(const std::string& username, const std::string& password) {
-    //登陆成功返回1、失败返回0
+bool CliApp::login(const std::string& username, const std::string& password) {
+    //登陆成功返回true、失败返回false
+    // TODO: 登录请求发送到服务器
+
 }
 
-void CliApp::logout() { 
+void CliApp::logout() {
+    logged_in = false;
+    current_database.clear();
+    // TODO: disconnect from server if applicable
+
+    std::cout << "Logged out successfully." << std::endl; 
 }

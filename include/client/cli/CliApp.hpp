@@ -20,8 +20,10 @@ private:
 
     void execute(const std::string& line);
 
-    int login(const std::string& username, const std::string& password);
+    bool login(const std::string& username, const std::string& password);
     void logout();
+
+    void main_loop(int logged_in);
 
     // DDL Handlers
     void handle_create_database(const CreateDatabaseCommand& cmd);
