@@ -4,10 +4,10 @@
 #include "Parser.hpp"
 #include <string>
 
-class CliApp {
-public:
-    void run();
+#include "../network/socket_client.hpp"
+#include "../network/query.hpp"
 
+class CliApp {
 private:
     //当前数据库的上下文 
     std::string current_database;
@@ -17,6 +17,14 @@ private:
     std::string password;
     // 登录状态  
     bool logged_in = false;
+
+    std::string server_ip = "127.0.0.1";
+    short server_port = 4399;
+
+    // 网络相关
+    NET::SocketClient client;
+    NET::NetworkQueryExecutor query_executor;
+    std::string session_token;
 
     void execute(const std::string& line);
 
@@ -37,5 +45,15 @@ private:
     void handle_select(const SelectCommand& cmd);
     void handle_update(const UpdateCommand& cmd);
     void handle_delete(const DeleteCommand& cmd);
+
+    
+    // 辅助方法
+    bool executeQuery(const NET::QueryRequest& request);
+    void handleQueryResponse(const NET::QueryResponse& response);
+
+public:
+    CliApp() : query_executor(client) {}
+
+    void run();
 };
 #endif // CLI_APP_HPP

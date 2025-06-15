@@ -7,6 +7,7 @@
 #include "serializer.hpp"
 #include "protocol.hpp"
 #include "../client/Parser.hpp"
+#include "socket_client.hpp"
 
 namespace NET {
 
@@ -165,6 +166,22 @@ private:
     static ColumnDefinition convertColumnDef(const ColumnDef& client_col);
     static WhereCondition convertWhereClause(const WhereClause& client_where);
     static SetClause convertSetClause(const ::SetClause& client_set);
+};
+
+class NetworkQueryExecutor {
+private:
+    SocketClient& client;
+    std::string session_token;
+
+public:
+    explicit NetworkQueryExecutor(SocketClient& client_ref);
+    
+    void setSessionToken(const std::string& token);
+    bool isAuthenticated() const;
+    void clearAuthentication();
+    
+    std::expected<std::unique_ptr<QueryResponse>, SocketError> 
+    executeQuery(const QueryRequest& request);
 };
 
 } // namespace NET
