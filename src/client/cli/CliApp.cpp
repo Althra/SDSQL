@@ -15,10 +15,10 @@ void CliApp::run() {
         std::cout << "Enter password: ";
         std::getline(std::cin, password);
         logged_in = login(username, password);
-        if (!logged_in) {
-            std::cout << "Login failed. Please try again." << std::endl;
-        }
+        if (logged_in){
         std::cout << "Logged in as " << username << std::endl; break; 
+        }
+        std::cout << "Login failed. Please try again." << std::endl;
     }
     
     while (logged_in) {
