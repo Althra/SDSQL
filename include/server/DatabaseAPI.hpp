@@ -1,28 +1,22 @@
-// DatabaseAPI.hpp
-
 #ifndef DATABASE_API_HPP
 #define DATABASE_API_HPP
 
+#include <algorithm> // For std::sort
 #include <map>
 #include <memory> // For std::unique_ptr
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-class DDLOperations;
-class DMLOperations;
-class TransactionManager;
-class AccessControl;
-
-    /**
-     * @brief 数据库中支持的数据类型枚举
-     */
-    enum class DataType {
-      INT,    // 整型数据
-      DOUBLE, // 浮点型数据
-      STRING, // 字符串类型数据
-      BOOL    // 布尔类型数据
-    };
+/**
+ * @brief 数据库中支持的数据类型枚举
+ */
+enum class DataType {
+  INT,    // 整型数据
+  DOUBLE, // 浮点型数据
+  STRING, // 字符串类型数据
+  BOOL    // 布尔类型数据
+};
 
 /**
  * @brief 定义表的列结构
@@ -41,129 +35,50 @@ struct ColumnDefinition {
       : name(name), type(type), isPrimaryKey(is_primary) {}
 };
 
-// ========================================================================
-// --- 新增部分 开始 ---
-// ========================================================================
-
 /**
- * @brief 表示一行数据，每个元素是列的字符串值。
+ * @brief 表示一行数据，每个元素是列值的字符串表示。
  */
 using Row = std::vector<std::string>;
 
 /**
- * @brief 在内存中表示表的元数据和行数据。
+ * @brief 内存中表示的表数据和元数据。
  */
 struct TableData {
   std::string name;                      // 表名
   std::vector<ColumnDefinition> columns; // 列定义
-  std::vector<Row> rows;                 // 表中的所有行数据
+  std::vector<Row> rows;                 // 表的实际数据
 
-  // 辅助函数，通过列名获取列索引
+  // 辅助函数：获取列的索引
   int getColumnIndex(const std::string &colName) const {
-    for (size_t i = 0; i < columns.size(); ++i) {
+    for (int i = 0; i < columns.size(); ++i) {
       if (columns[i].name == colName) {
-        return static_cast<int>(i);
+        return i;
       }
     }
     return -1; // 未找到
   }
 
-  // 辅助函数，通过列索引获取列类型
-  DataType getColumnType(int index) const {
-    if (index >= 0 && index < columns.size()) {
-      return columns[index].type;
+  // 辅助函数：获取列的数据类型
+  DataType getColumnType(int colIndex) const {
+    if (colIndex >= 0 && colIndex < columns.size()) {
+      return columns[colIndex].type;
     }
-    throw std::out_of_range("Column index out of range.");
+    throw std::out_of_range("Column index out of range for getType.");
   }
-};
-
-/**
- * @brief 权限类型枚举
- */
-enum class PermissionType {
-  SELECT,       // 查询权限
-  INSERT,       // 插入权限
-  UPDATE,       // 更新权限
-  DELETE,       // 删除权限
-  CREATE_TABLE, // 创建表权限
-  DROP_TABLE,   // 删除表权限
-  // 新增系统级权限
-  CREATE_USER,      // 创建用户权限
-  DROP_USER,        // 删除用户权限
-  GRANT_PERMISSION, // 授予权限权限
-  REVOKE_PERMISSION // 撤销权限权限
-};
-
-/**
- * @brief 表示一个具体的权限条目。
- */
-struct PermissionEntry {
-  PermissionType type; // 权限类型
-  std::string
-      objectType; // 权限作用的对象类型 (e.g., "TABLE", "DATABASE", "SYSTEM")
-  std::string objectName; // 权限作用的具体对象名称 (e.g., 表名, 数据库名)，可选
-
-  bool operator==(const PermissionEntry &other) const {
-    return type == other.type && objectType == other.objectType &&
-           objectName == other.objectName;
-  }
-};
-
-/**
- * @brief 用户账户信息。
- */
-struct User {
-  std::string username;
-  std::string hashedPassword;               // 存储密码的哈希值
-  std::vector<PermissionEntry> permissions; // 用户拥有的权限列表
-
-  bool hasPermission(PermissionType p_type, const std::string &obj_type,
-                     const std::string &obj_name = "") const {
-    // 简单实现：检查用户是否拥有完全匹配的权限
-    // 实际场景可能需要更复杂的权限继承和通配符匹配
-    for (const auto &perm : permissions) {
-      if (perm.type == p_type && perm.objectType == obj_type) {
-        // 如果对象名称为空，表示该权限适用于所有同类型对象
-        // 或者权限名称与请求的名称匹配
-        if (perm.objectName.empty() || perm.objectName == obj_name) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-};
-
-/**
- * @brief 事务日志条目类型。
- */
-enum class LogEntryType {
-  INSERT,
-  UPDATE_OLD_VALUE, // 用于更新操作，记录旧值以便回滚
-  DELETE
-};
-
-/**
- * @brief 事务日志中的一条记录。
- */
-struct LogEntry {
-  long transactionId;
-  LogEntryType type;
-  std::string tableName;
-  Row oldRow;        // 对于 UPDATE 和 DELETE，记录旧行数据
-  Row newRow;        // 对于 INSERT 和 UPDATE，记录新行数据
-  int rowIndex = -1; // 对于 UPDATE，记录被修改的行在内存中的索引
-
-  // 构造函数
-  LogEntry(long tx_id, LogEntryType t, const std::string &table,
-           const Row &old_r, const Row &new_r, int r_idx = -1)
-      : transactionId(tx_id), type(t), tableName(table), oldRow(old_r),
-        newRow(new_r), rowIndex(r_idx) {}
 };
 
 // ========================================================================
-// --- 新增部分 结束 ---
+// 这是所有模块共享的核心状态，现在我们把它放到 DatabaseAPI.hpp 中
+// 以确保所有模块引用的是同一个 DatabaseCoreImpl 类型。
+// 这个结构体现在将直接由 Database 类来管理（作为其 Pimpl）。
 // ========================================================================
+struct DatabaseCoreImpl {
+  std::string rootPath;             // 数据库系统的根目录
+  std::string currentDbName;        // 当前 'USE' 的数据库名
+  bool isTransactionActive = false; // 标记当前是否有事务正在进行
+  std::string transactionLogPath;   // 事务日志文件的路径
+  std::map<std::string, TableData> tables; // 内存中的表数据
+};
 
 // 前向声明 QueryResult 类
 class QueryResult;
@@ -276,91 +191,18 @@ public:
 };
 
 /**
- * @brief 数据库操作核心类。
- * 作为所有数据库功能的统一入口。
- */
-class Database {
-public:
-  /**
-   * @brief 构造函数，初始化数据库连接或打开数据库文件。
-   * @param dbPath 数据库文件或存储目录的路径。
-   */
-  explicit Database(const std::string &dbPath);
-
-  /**
-   * @brief 析构函数，负责关闭数据库连接和清理资源。
-   */
-  ~Database();
-
-  /**
-   * @brief 获取 DDL 操作接口。
-   * @return DDLOperations 对象的引用。
-   */
-  DDLOperations &getDDLOperations();
-
-  /**
-   * @brief 获取 DML 操作接口。
-   * @return DMLOperations 对象的引用。
-   */
-  DMLOperations &getDMLOperations();
-
-  /**
-   * @brief 获取事务管理接口。
-   * @return TransactionManager 对象的引用。
-   */
-  TransactionManager &getTransactionManager();
-
-  /**
-   * @brief 获取权限控制接口。
-   * @return AccessControl 对象的引用。
-   */
-  AccessControl &getAccessControl();
-
-  class Impl;
-
-private:
-  // Pimpl Idiom for the main Database class:
-  // This Impl class will hold the core database state and internal
-  // implementations of DDLOperations, DMLOperations, etc.
-  //   class Impl;
-  std::unique_ptr<Impl> pImpl;
-
-  // References to the public facing operation classes
-  std::unique_ptr<DDLOperations> ddl_ops;
-  std::unique_ptr<DMLOperations> dml_ops; // 已修改
-  std::unique_ptr<TransactionManager> tx_manager;
-  std::unique_ptr<AccessControl> ac_manager; // 已修改
-};
-
-/**
  * @brief 负责数据定义语言 (DDL) 操作，管理数据库和表。
  */
 class DDLOperations {
 public:
   // Pimpl Idiom: 隐藏内部实现细节
-  class Impl {
-  public:
-    // 指向数据库核心实现的指针
-    // 之前是 DatabaseCoreImpl* core_impl_; 现在指向 Database::Impl*
-    class Database::Impl* dbCoreImpl_;
+  class Impl;
+  std::unique_ptr<Impl> pImpl; // 现在是 unique_ptr
 
-    explicit Impl(Database::Impl *core);
-    ~Impl();
-    
-    // 这里可以添加DDL::Impl特有的成员
-    // 实际逻辑在 DDLOperations.cpp 中
-    bool createDatabase(const std::string &dbName);
-    bool dropDatabase(const std::string &dbName);
-    bool useDatabase(const std::string &dbName);
-    bool createTable(const std::string &tableName,
-                     const std::vector<ColumnDefinition> &columns);
-    bool dropTable(const std::string &tableName);
-  };
-
-  Impl *pImpl; // 注意：这里还是裸指针，后续会改为 unique_ptr 管理
-  // 构造函数，需要一个指向DDL实现的指针
-  DDLOperations(class DDLOperations::Impl *db_core_impl);
-  ~DDLOperations();
+  // 构造函数，需要一个指向共享核心实现的指针
+  explicit DDLOperations(
+      DatabaseCoreImpl *core_impl_ptr); // 接受 DatabaseCoreImpl*
+  ~DDLOperations();                     // 需要在 .cpp 中定义
 
   /**
    * @brief 创建一个新的数据库。
@@ -408,30 +250,13 @@ public:
 class DMLOperations {
 public:
   // Pimpl Idiom: 隐藏内部实现细节
-  class Impl{
-  public:
-    class Database::Impl *dbCoreImpl_;
-    explicit Impl(Database::Impl *core);
-    // 为了编译通过，暂时放一个假的实现，实际逻辑在 DMLOperations.cpp 中
-    int insert(const std::string &tableName,
-               const std::map<std::string, std::string> &values) ;
-    int update(const std::string &tableName,
-               const std::map<std::string, std::string> &updates,
-               const std::string &whereClause) ;
-    int remove(const std::string &tableName, const std::string &whereClause) ;
-    std::unique_ptr<QueryResult> select(const std::string &tableName,
-                                        const std::string &whereClause,
-                                        const std::string &orderBy);
-  };
+  class Impl;
+  std::unique_ptr<Impl> pImpl; // 现在是 unique_ptr
 
-  // 使用 unique_ptr 管理 Impl 的生命周期
-  std::unique_ptr<Impl> pImpl;
-  // 构造函数，需要一个指向数据库核心实现的指针
-  DMLOperations(
-      class DMLOperations::Impl *db_core_impl); // 前向声明 Database::Impl
-  //   DMLOperations(Impl *db_core_impl); // 前向声明 Database::Impl
-
-  ~DMLOperations();
+  // 构造函数，需要一个指向共享核心实现的指针
+  explicit DMLOperations(
+      DatabaseCoreImpl *core_impl_ptr); // 接受 DatabaseCoreImpl*
+  ~DMLOperations();                     // 需要在 .cpp 中定义
 
   /**
    * @brief 向表中插入一条记录。
@@ -481,19 +306,13 @@ public:
 class TransactionManager {
 public:
   // Pimpl Idiom: 隐藏内部实现细节
-  class Impl{
-  public:
-    class Database::Impl *dbCoreImpl_;
-    explicit Impl(class Database::Impl *core);
-    void beginTransaction();
-    void commit();
-    void rollback();
-  };
-  Impl *pImpl; // 注意：这里还是裸指针，后续会改为 unique_ptr 管理
-  // 构造函数，需要一个指向数据库核心实现的指针
-  TransactionManager(
-      class TransactionManager::Impl *db_core_impl); // 前向声明 Database::Impl
-  ~TransactionManager();
+  class Impl;
+  std::unique_ptr<Impl> pImpl; // 现在是 unique_ptr
+
+  // 构造函数，需要一个指向共享核心实现的指针
+  explicit TransactionManager(
+      DatabaseCoreImpl *core_impl_ptr); // 接受 DatabaseCoreImpl*
+  ~TransactionManager();                // 需要在 .cpp 中定义
 
   /**
    * @brief 开始一个新事务。
@@ -512,90 +331,49 @@ public:
 };
 
 /**
- * @brief 负责用户认证和权限管理。
+ * @brief 数据库操作核心类。
+ * 作为所有数据库功能的统一入口。
  */
-class AccessControl {
+class Database {
 public:
-  // Pimpl Idiom: 隐藏内部实现细节
-  class Impl{
-  public:
-    class Database::Impl *dbCoreImpl_;
-    explicit Impl(Database::Impl *core);
-    bool login(const std::string &username, const std::string &password);
-    bool logout() ;
-    bool createUser(const std::string &username, const std::string &password);
-    bool dropUser(const std::string &username);
-    bool grantPermission(const std::string &username, PermissionType permission,
-                         const std::string &objectType,
-                         const std::string &objectName) ;
-    bool revokePermission(const std::string &username,
-                          PermissionType permission,
-                          const std::string &objectType,
-                          const std::string &objectName);
-  };
-
-
-  // 使用 unique_ptr 管理 Impl 的生命周期
-  std::unique_ptr<Impl> pImpl;
-  // 构造函数，需要一个指向数据库核心实现的指针
-  AccessControl(
-      class AccessControl::Impl *db_core_impl); // 前向声明 Database::Impl
-  ~AccessControl();
+  /**
+   * @brief 构造函数，初始化数据库连接或打开数据库文件。
+   * @param dbPath 数据库文件或存储目录的路径。
+   */
+  explicit Database(const std::string &dbPath);
 
   /**
-   * @brief 用户登录。
-   * @param username 用户名。
-   * @param password 密码。
-   * @return 如果认证成功则返回 true，否则返回 false。
+   * @brief 析构函数，负责关闭数据库连接和清理资源。
    */
-  bool login(const std::string &username, const std::string &password);
+  ~Database(); // 需要在 .cpp 中定义
 
   /**
-   * @brief 用户登出。
-   * @return 始终返回 true。
+   * @brief 获取 DDL 操作接口。
+   * @return DDLOperations 对象的引用。
    */
-  bool logout();
+  DDLOperations &getDDLOperations();
 
   /**
-   * @brief 创建一个新用户。
-   * @param username 新用户的用户名。
-   * @param password 新用户的密码。
-   * @return 如果成功创建用户则返回 true，否则返回 false。
+   * @brief 获取 DML 操作接口。
+   * @return DMLOperations 对象的引用。
    */
-  bool createUser(const std::string &username, const std::string &password);
+  DMLOperations &getDMLOperations();
 
   /**
-   * @brief 删除一个用户。
-   * @param username 要删除的用户的用户名。
-   * @return 如果成功删除用户则返回 true，否则返回 false。
+   * @brief 获取事务管理接口。
+   * @return TransactionManager 对象的引用。
    */
-  bool dropUser(const std::string &username);
+  TransactionManager &getTransactionManager();
 
-  /**
-   * @brief 授予用户特定权限。
-   * @param username 被授予权限的用户名。
-   * @param permission 要授予的权限类型。
-   * @param objectType 权限作用的对象类型（例如："TABLE", "DATABASE"）。
-   * @param objectName 权限作用的具体对象名称（例如表名），可选。
-   * @return 如果成功授予权限则返回 true，否则返回 false。
-   */
-  bool grantPermission(const std::string &username, PermissionType permission,
-                       const std::string &objectType,
-                       const std::string &objectName = "");
+private:
+  // Database 现在直接管理 DatabaseCoreImpl，而不是通过一个嵌套的 Impl 类
+  std::unique_ptr<DatabaseCoreImpl> core_state_pImpl; // 命名更清晰
 
-  /**
-   * @brief 撤销用户的特定权限。
-   * @param username 被撤销权限的用户名。
-   * @param permission 要撤销的权限类型。
-   * @param objectType 权限作用的对象类型。
-   * @param objectName 权限作用的具体对象名称，可选。
-   * @return 如果成功撤销权限则返回 true，否则返回 false。
-   */
-  bool revokePermission(const std::string &username, PermissionType permission,
-                        const std::string &objectType,
-                        const std::string &objectName = "");
+  // References to the public facing operation classes
+  std::unique_ptr<DDLOperations> ddl_ops;
+  std::unique_ptr<DMLOperations> dml_ops;
+  std::unique_ptr<TransactionManager> tx_manager;
+  // std::unique_ptr<AccessControl> ac_manager;
 };
-
-
 
 #endif // DATABASE_API_HPP
