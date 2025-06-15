@@ -1,7 +1,7 @@
 #include "../../include/network/protocol.hpp"
 #include <chrono>
 
-#include "network/query.hpp"
+#include "../../include/network/query.hpp"
 
 namespace NET {
 

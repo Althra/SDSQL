@@ -9,10 +9,10 @@ create table test(id int, name string)
 -- ======================================
 -- 数据插入测试
 -- ======================================
-insert into test(id , name) values(1, "aaa")
-insert into test(id , name) values(2, "bbb")
-insert into test(id , name) values(3, "ccc")
-insert into test(id , name) values(4, "aaa")
+insert into test values(1, "aaa")
+insert into test values(2, "bbb")
+insert into test values(3, "ccc")
+insert into test values(4, "aaa")
 
 
 -- ======================================

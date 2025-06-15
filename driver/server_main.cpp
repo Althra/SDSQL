@@ -14,266 +14,13 @@
 #define USERNAME "admin"
 #define PASSWORD "123456"
 
+void handleLogin(NET::SocketServer& server, int client_fd, const NET::LoginRequest& request);
+void handleQuery(NET::SocketServer& server, int client_fd, const NET::QueryRequest& request);
+
 // 全局变量
 std::string current_token = "";
 bool is_logged_in = false;
 std::unique_ptr<Database> database_instance = nullptr;
-
-// 简单的token生成
-std::string generateSimpleToken() {
-    static int counter = 1000;
-    return "token_" + std::to_string(++counter);
-}
-
-// 验证token
-bool validateToken(const std::string& token) {
-    return is_logged_in && token == current_token;
-}
-
-// 数据类型转换函数
-DataType convertNetworkDataType(NET::DataType net_type) {
-    switch (net_type) {
-        case NET::DataType::INT: return DataType::INT;
-        case NET::DataType::DOUBLE: return DataType::DOUBLE;
-        case NET::DataType::STRING: return DataType::STRING;
-        case NET::DataType::BOOL: return DataType::BOOL;
-        default: return DataType::STRING;
-    }
-}
-
-NET::DataType convertToNetworkDataType(DataType db_type) {
-    switch (db_type) {
-        case DataType::INT: return NET::DataType::INT;
-        case DataType::DOUBLE: return NET::DataType::DOUBLE;
-        case DataType::STRING: return NET::DataType::STRING;
-        case DataType::BOOL: return NET::DataType::BOOL;
-        default: return NET::DataType::STRING;
-    }
-}
-
-// 执行结构化查询的核心函数
-NET::QueryResponse executeQuery(const NET::QueryRequest& request) {
-    if (!database_instance) {
-        return NET::QueryResponse("Database not initialized");
-    }
-    
-    try {
-        DDLOperations& ddl_ops = database_instance->getDDLOperations();
-        DMLOperations& dml_ops = database_instance->getDMLOperations();
-        
-        switch (request.getOperation()) {
-            case NET::OperationType::CREATE_DATABASE: {
-                bool success = ddl_ops.createDatabase(request.getDatabaseName());
-                if (success) {
-                    std::cout << "[DDL] Created database: " << request.getDatabaseName() << std::endl;
-                    return NET::QueryResponse({}, {}); // 成功，无返回数据
-                } else {
-                    return NET::QueryResponse("Failed to create database: " + request.getDatabaseName());
-                }
-            }
-            
-            case NET::OperationType::DROP_DATABASE: {
-                bool success = ddl_ops.dropDatabase(request.getDatabaseName());
-                if (success) {
-                    std::cout << "[DDL] Dropped database: " << request.getDatabaseName() << std::endl;
-                    return NET::QueryResponse({}, {});
-                } else {
-                    return NET::QueryResponse("Failed to drop database: " + request.getDatabaseName());
-                }
-            }
-            
-            case NET::OperationType::USE_DATABASE: {
-                bool success = ddl_ops.useDatabase(request.getDatabaseName());
-                if (success) {
-                    std::cout << "[DDL] Using database: " << request.getDatabaseName() << std::endl;
-                    return NET::QueryResponse({}, {});
-                } else {
-                    return NET::QueryResponse("Database not found: " + request.getDatabaseName());
-                }
-            }
-            
-            case NET::OperationType::CREATE_TABLE: {
-                std::vector<ColumnDefinition> columns;
-                for (const auto& net_col : request.getColumns()) {
-                    columns.emplace_back(net_col.name, 
-                                       convertNetworkDataType(net_col.type), 
-                                       net_col.is_primary_key);
-                }
-                
-                bool success = ddl_ops.createTable(request.getTableName(), columns);
-                if (success) {
-                    std::cout << "[DDL] Created table: " << request.getTableName() << std::endl;
-                    return NET::QueryResponse({}, {});
-                } else {
-                    return NET::QueryResponse("Failed to create table: " + request.getTableName());
-                }
-            }
-            
-            case NET::OperationType::DROP_TABLE: {
-                bool success = ddl_ops.dropTable(request.getTableName());
-                if (success) {
-                    std::cout << "[DDL] Dropped table: " << request.getTableName() << std::endl;
-                    return NET::QueryResponse({}, {});
-                } else {
-                    return NET::QueryResponse("Failed to drop table: " + request.getTableName());
-                }
-            }
-            
-            case NET::OperationType::INSERT: {
-                std::map<std::string, std::string> values;
-                const auto& insert_values = request.getInsertValues();
-                
-                // 简单实现：假设插入值按顺序对应表的列
-                // 在实际实现中，您可能需要获取表的列信息来正确映射
-                for (size_t i = 0; i < insert_values.size(); ++i) {
-                    values["col_" + std::to_string(i)] = insert_values[i].value;
-                }
-                
-                int affected_rows = dml_ops.insert(request.getTableName(), values);
-                if (affected_rows > 0) {
-                    std::cout << "[DML] Inserted " << affected_rows << " row(s) into " << request.getTableName() << std::endl;
-                    
-                    // 返回受影响行数
-                    std::vector<std::string> columns = {"affected_rows"};
-                    std::vector<NET::QueryResponse::Row> rows;
-                    NET::QueryResponse::Row row;
-                    row.columns = {std::to_string(affected_rows)};
-                    rows.push_back(row);
-                    
-                    return NET::QueryResponse(columns, rows);
-                } else {
-                    return NET::QueryResponse("Failed to insert into table: " + request.getTableName());
-                }
-            }
-            
-            case NET::OperationType::SELECT: {
-                std::string where_clause = "";
-                if (request.getWhereCondition().has_value()) {
-                    const auto& where = request.getWhereCondition().value();
-                    where_clause = where.column + " " + where.operator_str + " '" + where.value.value + "'";
-                }
-                
-                auto result = dml_ops.select(request.getTableName(), where_clause);
-                if (result && result->getRowCount() > 0) {
-                    std::cout << "[DML] Selected " << result->getRowCount() << " row(s) from " << request.getTableName() << std::endl;
-                    
-                    // 构建响应
-                    std::vector<std::string> columns;
-                    for (int i = 0; i < result->getColumnCount(); ++i) {
-                        columns.push_back(result->getColumnName(i));
-                    }
-                    
-                    std::vector<NET::QueryResponse::Row> rows;
-                    while (result->next()) {
-                        NET::QueryResponse::Row row;
-                        for (int i = 0; i < result->getColumnCount(); ++i) {
-                            row.columns.push_back(result->getString(i));
-                        }
-                        rows.push_back(row);
-                    }
-                    
-                    return NET::QueryResponse(columns, rows);
-                } else {
-                    // 空结果集也是成功的
-                    return NET::QueryResponse({}, {});
-                }
-            }
-            
-            case NET::OperationType::UPDATE: {
-                std::map<std::string, std::string> updates;
-                for (const auto& set_clause : request.getUpdateClauses()) {
-                    updates[set_clause.column] = set_clause.value.value;
-                }
-                
-                std::string where_clause = "";
-                if (request.getWhereCondition().has_value()) {
-                    const auto& where = request.getWhereCondition().value();
-                    where_clause = where.column + " " + where.operator_str + " '" + where.value.value + "'";
-                }
-                
-                int affected_rows = dml_ops.update(request.getTableName(), updates, where_clause);
-                std::cout << "[DML] Updated " << affected_rows << " row(s) in " << request.getTableName() << std::endl;
-                
-                // 返回受影响行数
-                std::vector<std::string> columns = {"affected_rows"};
-                std::vector<NET::QueryResponse::Row> rows;
-                NET::QueryResponse::Row row;
-                row.columns = {std::to_string(affected_rows)};
-                rows.push_back(row);
-                
-                return NET::QueryResponse(columns, rows);
-            }
-            
-            case NET::OperationType::DELETE: {
-                std::string where_clause = "";
-                if (request.getWhereCondition().has_value()) {
-                    const auto& where = request.getWhereCondition().value();
-                    where_clause = where.column + " " + where.operator_str + " '" + where.value.value + "'";
-                }
-                
-                int affected_rows = dml_ops.remove(request.getTableName(), where_clause);
-                std::cout << "[DML] Deleted " << affected_rows << " row(s) from " << request.getTableName() << std::endl;
-                
-                // 返回受影响行数
-                std::vector<std::string> columns = {"affected_rows"};
-                std::vector<NET::QueryResponse::Row> rows;
-                NET::QueryResponse::Row row;
-                row.columns = {std::to_string(affected_rows)};
-                rows.push_back(row);
-                
-                return NET::QueryResponse(columns, rows);
-            }
-            
-            default:
-                return NET::QueryResponse("Unsupported operation type");
-        }
-        
-    } catch (const DatabaseException& e) {
-        std::cerr << "[ERROR] Database exception: " << e.what() << std::endl;
-        return NET::QueryResponse("Database error: " + std::string(e.what()));
-    } catch (const std::exception& e) {
-        std::cerr << "[ERROR] General exception: " << e.what() << std::endl;
-        return NET::QueryResponse("Internal error: " + std::string(e.what()));
-    }
-}
-
-// 处理登录请求
-void handleLogin(NET::SocketServer& server, int client_fd, const NET::LoginRequest& request) {
-    std::cout << "[LOGIN] User: " << request.getUsername() << std::endl;
-    
-    if (request.getUsername() == USERNAME && request.getPassword() == PASSWORD) {
-        current_token = generateSimpleToken();
-        is_logged_in = true;
-        
-        std::cout << "[LOGIN] Success, Token: " << current_token << std::endl;
-        NET::LoginSuccess response(current_token, 1001);
-        server.sendMessage(client_fd, response);
-    } else {
-        std::cout << "[LOGIN] Failed: Invalid credentials" << std::endl;
-        NET::LoginFailure response("Invalid username or password");
-        server.sendMessage(client_fd, response);
-    }
-}
-
-// 处理结构化查询请求
-void handleQuery(NET::SocketServer& server, int client_fd, const NET::QueryRequest& request) {
-    std::cout << "[QUERY] Operation: " << static_cast<int>(request.getOperation()) << std::endl;
-    
-    if (!validateToken(request.getSessionToken())) {
-        std::cout << "[QUERY] Token validation failed" << std::endl;
-        NET::ErrorResponse response("Invalid or expired token", 401);
-        server.sendMessage(client_fd, response);
-        return;
-    }
-    
-    std::cout << "[QUERY] Token validation successful" << std::endl;
-    
-    // 执行查询
-    NET::QueryResponse response = executeQuery(request);
-    server.sendMessage(client_fd, response);
-    
-    std::cout << "[QUERY] Response sent" << std::endl;
-}
 
 // 初始化测试数据
 void initializeTestData() {
@@ -398,4 +145,259 @@ int main() {
     }
     
     return 0;
+}
+
+// ========== Tool Functions ==========
+
+// 简单的token生成
+std::string generateSimpleToken() {
+    static int counter = 1000;
+    return "token_" + std::to_string(++counter);
+}
+
+// 验证token
+bool validateToken(const std::string& token) {
+    return is_logged_in && token == current_token;
+}
+
+// 数据类型转换函数
+DataType convertNetworkDataType(NET::DataType net_type) {
+    switch (net_type) {
+        case NET::DataType::INT: return DataType::INT;
+        case NET::DataType::DOUBLE: return DataType::DOUBLE;
+        case NET::DataType::STRING: return DataType::STRING;
+        case NET::DataType::BOOL: return DataType::BOOL;
+        default: return DataType::STRING;
+    }
+}
+
+NET::DataType convertToNetworkDataType(DataType db_type) {
+    switch (db_type) {
+        case DataType::INT: return NET::DataType::INT;
+        case DataType::DOUBLE: return NET::DataType::DOUBLE;
+        case DataType::STRING: return NET::DataType::STRING;
+        case DataType::BOOL: return NET::DataType::BOOL;
+        default: return NET::DataType::STRING;
+    }
+}
+
+// 执行查询的核心函数
+NET::QueryResponse executeQuery(const NET::QueryRequest& request) {
+    if (!database_instance) {
+        return NET::QueryResponse("Database not initialized");
+    }
+    
+    try {
+        DDLOperations& ddl_ops = database_instance->getDDLOperations();
+        DMLOperations& dml_ops = database_instance->getDMLOperations();
+        
+        switch (request.getOperation()) {
+            case NET::OperationType::CREATE_DATABASE: {
+                bool success = ddl_ops.createDatabase(request.getDatabaseName());
+                if (success) {
+                    std::cout << "[DDL] Created database: " << request.getDatabaseName() << std::endl;
+                    return NET::QueryResponse({}, {}); // 成功，无返回数据
+                } else {
+                    return NET::QueryResponse("Failed to create database: " + request.getDatabaseName());
+                }
+            }
+            
+            case NET::OperationType::DROP_DATABASE: {
+                bool success = ddl_ops.dropDatabase(request.getDatabaseName());
+                if (success) {
+                    std::cout << "[DDL] Dropped database: " << request.getDatabaseName() << std::endl;
+                    return NET::QueryResponse({}, {});
+                } else {
+                    return NET::QueryResponse("Failed to drop database: " + request.getDatabaseName());
+                }
+            }
+            
+            case NET::OperationType::USE_DATABASE: {
+                bool success = ddl_ops.useDatabase(request.getDatabaseName());
+                if (success) {
+                    std::cout << "[DDL] Using database: " << request.getDatabaseName() << std::endl;
+                    return NET::QueryResponse({}, {});
+                } else {
+                    return NET::QueryResponse("Database not found: " + request.getDatabaseName());
+                }
+            }
+            
+            case NET::OperationType::CREATE_TABLE: {
+                std::vector<ColumnDefinition> columns;
+                for (const auto& net_col : request.getColumns()) {
+                    columns.emplace_back(net_col.name, 
+                                       convertNetworkDataType(net_col.type), 
+                                       net_col.is_primary_key);
+                }
+                
+                bool success = ddl_ops.createTable(request.getTableName(), columns);
+                if (success) {
+                    std::cout << "[DDL] Created table: " << request.getTableName() << std::endl;
+                    return NET::QueryResponse({}, {});
+                } else {
+                    return NET::QueryResponse("Failed to create table: " + request.getTableName());
+                }
+            }
+            
+            case NET::OperationType::DROP_TABLE: {
+                bool success = ddl_ops.dropTable(request.getTableName());
+                if (success) {
+                    std::cout << "[DDL] Dropped table: " << request.getTableName() << std::endl;
+                    return NET::QueryResponse({}, {});
+                } else {
+                    return NET::QueryResponse("Failed to drop table: " + request.getTableName());
+                }
+            }
+            
+            case NET::OperationType::INSERT: {
+                std::map<std::string, std::string> values;
+                const auto& insert_values = request.getInsertValues();
+
+                for (size_t i = 0; i < insert_values.size(); ++i) {
+                    values["col_" + std::to_string(i)] = insert_values[i].value;
+                }
+                
+                int affected_rows = dml_ops.insert(request.getTableName(), values);
+                if (affected_rows > 0) {
+                    std::cout << "[DML] Inserted " << affected_rows << " row(s) into " << request.getTableName() << std::endl;
+                    
+                    // 返回受影响行数
+                    std::vector<std::string> columns = {"affected_rows"};
+                    std::vector<NET::QueryResponse::Row> rows;
+                    NET::QueryResponse::Row row;
+                    row.columns = {std::to_string(affected_rows)};
+                    rows.push_back(row);
+                    
+                    return NET::QueryResponse(columns, rows);
+                } else {
+                    return NET::QueryResponse("Failed to insert into table: " + request.getTableName());
+                }
+            }
+            
+            case NET::OperationType::SELECT: {
+                std::string where_clause = "";
+                if (request.getWhereCondition().has_value()) {
+                    const auto& where = request.getWhereCondition().value();
+                    where_clause = where.column + " " + where.operator_str + " '" + where.value.value + "'";
+                }
+                
+                auto result = dml_ops.select(request.getTableName(), where_clause);
+                if (result && result->getRowCount() > 0) {
+                    std::cout << "[DML] Selected " << result->getRowCount() << " row(s) from " << request.getTableName() << std::endl;
+                    
+                    // 构建响应
+                    std::vector<std::string> columns;
+                    for (int i = 0; i < result->getColumnCount(); ++i) {
+                        columns.push_back(result->getColumnName(i));
+                    }
+                    
+                    std::vector<NET::QueryResponse::Row> rows;
+                    while (result->next()) {
+                        NET::QueryResponse::Row row;
+                        for (int i = 0; i < result->getColumnCount(); ++i) {
+                            row.columns.push_back(result->getString(i));
+                        }
+                        rows.push_back(row);
+                    }
+                    
+                    return NET::QueryResponse(columns, rows);
+                } else {
+                    return NET::QueryResponse({}, {});
+                }
+            }
+            
+            case NET::OperationType::UPDATE: {
+                std::map<std::string, std::string> updates;
+                for (const auto& set_clause : request.getUpdateClauses()) {
+                    updates[set_clause.column] = set_clause.value.value;
+                }
+                
+                std::string where_clause = "";
+                if (request.getWhereCondition().has_value()) {
+                    const auto& where = request.getWhereCondition().value();
+                    where_clause = where.column + " " + where.operator_str + " '" + where.value.value + "'";
+                }
+                
+                int affected_rows = dml_ops.update(request.getTableName(), updates, where_clause);
+                std::cout << "[DML] Updated " << affected_rows << " row(s) in " << request.getTableName() << std::endl;
+                
+                // 返回受影响行数
+                std::vector<std::string> columns = {"affected_rows"};
+                std::vector<NET::QueryResponse::Row> rows;
+                NET::QueryResponse::Row row;
+                row.columns = {std::to_string(affected_rows)};
+                rows.push_back(row);
+                
+                return NET::QueryResponse(columns, rows);
+            }
+            
+            case NET::OperationType::DELETE: {
+                std::string where_clause = "";
+                if (request.getWhereCondition().has_value()) {
+                    const auto& where = request.getWhereCondition().value();
+                    where_clause = where.column + " " + where.operator_str + " '" + where.value.value + "'";
+                }
+                
+                int affected_rows = dml_ops.remove(request.getTableName(), where_clause);
+                std::cout << "[DML] Deleted " << affected_rows << " row(s) from " << request.getTableName() << std::endl;
+                
+                // 返回受影响行数
+                std::vector<std::string> columns = {"affected_rows"};
+                std::vector<NET::QueryResponse::Row> rows;
+                NET::QueryResponse::Row row;
+                row.columns = {std::to_string(affected_rows)};
+                rows.push_back(row);
+                
+                return NET::QueryResponse(columns, rows);
+            }
+            
+            default:
+                return NET::QueryResponse("Unsupported operation type");
+        }
+        
+    } catch (const DatabaseException& e) {
+        std::cerr << "[ERROR] Database exception: " << e.what() << std::endl;
+        return NET::QueryResponse("Database error: " + std::string(e.what()));
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] General exception: " << e.what() << std::endl;
+        return NET::QueryResponse("Internal error: " + std::string(e.what()));
+    }
+}
+
+// 处理登录请求
+void handleLogin(NET::SocketServer& server, int client_fd, const NET::LoginRequest& request) {
+    std::cout << "[LOGIN] User: " << request.getUsername() << std::endl;
+    
+    if (request.getUsername() == USERNAME && request.getPassword() == PASSWORD) {
+        current_token = generateSimpleToken();
+        is_logged_in = true;
+        
+        std::cout << "[LOGIN] Success, Token: " << current_token << std::endl;
+        NET::LoginSuccess response(current_token, 1001);
+        server.sendMessage(client_fd, response);
+    } else {
+        std::cout << "[LOGIN] Failed: Invalid credentials" << std::endl;
+        NET::LoginFailure response("Invalid username or password");
+        server.sendMessage(client_fd, response);
+    }
+}
+
+// 处理结构化查询请求
+void handleQuery(NET::SocketServer& server, int client_fd, const NET::QueryRequest& request) {
+    std::cout << "[QUERY] Operation: " << static_cast<int>(request.getOperation()) << std::endl;
+    
+    if (!validateToken(request.getSessionToken())) {
+        std::cout << "[QUERY] Token validation failed" << std::endl;
+        NET::ErrorResponse response("Invalid or expired token", 401);
+        server.sendMessage(client_fd, response);
+        return;
+    }
+    
+    std::cout << "[QUERY] Token validation successful" << std::endl;
+    
+    // 执行查询
+    NET::QueryResponse response = executeQuery(request);
+    server.sendMessage(client_fd, response);
+    
+    std::cout << "[QUERY] Response sent" << std::endl;
 }
