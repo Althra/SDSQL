@@ -1,0 +1,22 @@
+create database test
+use test
+create table test(id int, name string)
+
+insert into test(id , name) values(1, "aaa")
+insert into test(id , name) values(2, "bbb")
+insert into test(id , name) values(3, "ccc")
+insert into test(id , name) values(4, "aaa")
+select * from test
+
+select * from test where id = 1
+select * from test where name = aaa
+select * from test where id > 1
+
+update test set name = "ddd" where id = 1
+select * from test where id = 1
+
+delete from test where id = 1
+select * from test where id = 1
+
+drop table test
+drop database test
