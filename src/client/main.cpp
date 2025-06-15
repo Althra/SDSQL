@@ -1,7 +1,7 @@
-#include "../../include/client/CliApp.hpp"
+// #include "../../include/client/CliApp.hpp"
 
-int main() {
-    CliApp app;
-    app.run();
-    return 0;
-}
+// int main() {
+//     CliApp app;
+//     app.run();
+//     return 0;
+// }

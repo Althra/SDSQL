@@ -1,24 +1,28 @@
-#include "../../include/net/socket_client.hpp"
+#include "../../include/network/socket_server.hpp"
 #include <cstring>
 
 namespace NET {
 
-SocketClient::SocketClient() = default;
+SocketServer::SocketServer() = default;
 
-SocketClient::~SocketClient() {
-    disconnect();
+SocketServer::~SocketServer() {
+    stop();
 }
 
-std::expected<void, SocketError> SocketClient::connect(const std::string& ip, uint16_t port) {
-    if (connected) {
-        return {}; // 已经连接
+std::expected<void, SocketError> SocketServer::start(const std::string& ip, uint16_t port) {
+    if (running) {
+        return {}; // 已经在运行
     }
 
     // 创建socket
-    socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_fd < 0) {
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
         return std::unexpected(SocketError::SOCKET_CREATE_FAILED);
     }
+
+    // 设置地址重用
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     // 设置服务器地址
     memset(&server_addr, 0, sizeof(server_addr));
@@ -26,50 +30,60 @@ std::expected<void, SocketError> SocketClient::connect(const std::string& ip, ui
     server_addr.sin_port = htons(port);
     
     if (inet_pton(AF_INET, ip.c_str(), &server_addr.sin_addr) != 1) {
-        close(socket_fd);
-        socket_fd = -1;
+        close(server_fd);
+        server_fd = -1;
         return std::unexpected(SocketError::INVALID_ADDRESS);
     }
 
-    // 连接到服务器
-    if (::connect(socket_fd, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
-        close(socket_fd);
-        socket_fd = -1;
-        return std::unexpected(SocketError::SEND_FAILED);
+    // 绑定
+    if (bind(server_fd, reinterpret_cast<sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
+        close(server_fd);
+        server_fd = -1;
+        return std::unexpected(SocketError::BIND_FAILED);
     }
 
-    connected = true;
+    // 监听
+    if (listen(server_fd, 10) < 0) {
+        close(server_fd);
+        server_fd = -1;
+        return std::unexpected(SocketError::LISTEN_FAILED);
+    }
+
+    running = true;
     return {};
 }
 
-void SocketClient::disconnect() {
-    if (!connected) {
+void SocketServer::stop() {
+    if (!running) {
         return;
     }
 
-    connected = false;
-    if (socket_fd != -1) {
-        close(socket_fd);
-        socket_fd = -1;
+    running = false;
+    if (server_fd != -1) {
+        close(server_fd);
+        server_fd = -1;
     }
 }
 
-std::expected<void, SocketError> SocketClient::sendMessage(const Message& message) {
-    if (!connected) {
-        return std::unexpected(SocketError::SEND_FAILED);
+std::expected<int, SocketError> SocketServer::acceptClient() {
+    if (!running) {
+        return std::unexpected(SocketError::SOCKET_CREATE_FAILED);
     }
 
-    auto serialized = message.serialize();
-    return sendBytes(serialized);
+    sockaddr_in client_addr{};
+    socklen_t addr_len = sizeof(client_addr);
+
+    int client_fd = accept(server_fd, reinterpret_cast<sockaddr*>(&client_addr), &addr_len);
+    if (client_fd < 0) {
+        return std::unexpected(SocketError::ACCEPT_FAILED);
+    }
+
+    return client_fd;
 }
 
-std::expected<std::unique_ptr<Message>, SocketError> SocketClient::receiveMessage() {
-    if (!connected) {
-        return std::unexpected(SocketError::RECV_FAILED);
-    }
-
+std::expected<std::unique_ptr<Message>, SocketError> SocketServer::receiveMessage(int client_fd) {
     // 先接收消息头
-    auto header_bytes = receiveBytes(MessageHeader::HEADER_SIZE);
+    auto header_bytes = receiveBytes(client_fd, MessageHeader::HEADER_SIZE);
     if (!header_bytes.has_value()) {
         return std::unexpected(header_bytes.error());
     }
@@ -87,7 +101,7 @@ std::expected<std::unique_ptr<Message>, SocketError> SocketClient::receiveMessag
     // 接收载荷数据
     std::vector<std::byte> full_message = std::move(header_bytes.value());
     if (payload_size > 0) {
-        auto payload_bytes = receiveBytes(payload_size);
+        auto payload_bytes = receiveBytes(client_fd, payload_size);
         if (!payload_bytes.has_value()) {
             return std::unexpected(payload_bytes.error());
         }
@@ -103,12 +117,23 @@ std::expected<std::unique_ptr<Message>, SocketError> SocketClient::receiveMessag
     return std::move(message.value());
 }
 
-std::expected<std::vector<std::byte>, SocketError> SocketClient::receiveBytes(size_t size) {
+std::expected<void, SocketError> SocketServer::sendMessage(int client_fd, const Message& message) {
+    auto serialized = message.serialize();
+    return sendBytes(client_fd, serialized);
+}
+
+void SocketServer::disconnectClient(int client_fd) {
+    if (client_fd >= 0) {
+        close(client_fd);
+    }
+}
+
+std::expected<std::vector<std::byte>, SocketError> SocketServer::receiveBytes(int fd, size_t size) {
     std::vector<std::byte> buffer(size);
     size_t total_received = 0;
 
     while (total_received < size) {
-        ssize_t received = recv(socket_fd, 
+        ssize_t received = recv(fd, 
                                reinterpret_cast<char*>(buffer.data()) + total_received, 
                                size - total_received, 0);
         
@@ -126,12 +151,12 @@ std::expected<std::vector<std::byte>, SocketError> SocketClient::receiveBytes(si
     return buffer;
 }
 
-std::expected<void, SocketError> SocketClient::sendBytes(const std::vector<std::byte>& data) {
+std::expected<void, SocketError> SocketServer::sendBytes(int fd, const std::vector<std::byte>& data) {
     size_t total_sent = 0;
     const char* char_data = reinterpret_cast<const char*>(data.data());
 
     while (total_sent < data.size()) {
-        ssize_t sent = send(socket_fd, char_data + total_sent, data.size() - total_sent, 0);
+        ssize_t sent = send(fd, char_data + total_sent, data.size() - total_sent, 0);
         
         if (sent < 0) {
             return std::unexpected(SocketError::SEND_FAILED);

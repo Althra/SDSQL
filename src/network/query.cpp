@@ -1,4 +1,4 @@
-#include "../../include/net/query.hpp"
+#include "../../include/network/query.hpp"
 
 namespace NET {
 
@@ -381,6 +381,67 @@ WhereCondition QueryBuilder::convertWhereClause(const WhereClause& client_where)
 SetClause QueryBuilder::convertSetClause(const ::SetClause& client_set) {
     LiteralValue value = convertLiteralValue(client_set.value);
     return SetClause(client_set.column, std::move(value));
+}
+
+NetworkQueryExecutor::NetworkQueryExecutor(SocketClient& client_ref)
+        : client(client_ref) {
+    // 构造时session_token为空字符串，表示未认证状态
+}
+
+void NetworkQueryExecutor::setSessionToken(const std::string& token) {
+    session_token = token;
+}
+
+bool NetworkQueryExecutor::isAuthenticated() const {
+    // 只有当session_token不为空时才认为已认证
+    return !session_token.empty();
+}
+
+void NetworkQueryExecutor::clearAuthentication() {
+    // 清空session_token，将用户置为未认证状态
+    session_token.clear();
+}
+
+std::expected<std::unique_ptr<QueryResponse>, SocketError> 
+NetworkQueryExecutor::executeQuery(const QueryRequest& request) {
+    if (session_token.empty()) {
+        return std::unexpected(SocketError::SEND_FAILED);
+    }
+    
+    // 创建请求的副本并设置token
+    QueryRequest query_request = request;
+    query_request.setSessionToken(session_token);
+    
+    std::cout << "[DEBUG] Executing  query..." << std::endl;
+    
+    // 发送请求
+    auto send_result = client.sendMessage(query_request);
+    if (!send_result.has_value()) {
+        std::cerr << "[ERROR] Failed to send  query request" << std::endl;
+        return std::unexpected(send_result.error());
+    }
+    
+    // 接收响应
+    auto response_result = client.receiveMessage();
+    if (!response_result.has_value()) {
+        std::cerr << "[ERROR] Failed to receive query response" << std::endl;
+        return std::unexpected(SocketError::RECV_FAILED);
+    }
+    
+    auto message = std::move(response_result.value());
+    
+    // 检查响应类型
+    if (message->getType() == MessageType::QUERY_RESPONSE) {
+        auto* query_response = dynamic_cast<QueryResponse*>(message.release());
+        return std::unique_ptr<QueryResponse>(query_response);
+    } else if (message->getType() == MessageType::ERROR_RESPONSE) {
+        auto* error_response = dynamic_cast<ErrorResponse*>(message.get());
+        std::cerr << "[ERROR] Server error: " << error_response->getErrorMessage() << std::endl;
+        return std::unexpected(SocketError::RECV_FAILED);
+    }
+    
+    std::cerr << "[ERROR] Unexpected response type" << std::endl;
+    return std::unexpected(SocketError::RECV_FAILED);
 }
 
 } // namespace NET
