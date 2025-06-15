@@ -5,8 +5,23 @@
 
 void CliApp::run() {
     std::string line;
+    // --- 初始化当前数据库上下文 ---
     std::cout << "Type 'exit' or 'quit' to exit." << std::endl;
-    while (true) {
+
+    while (!logged_in)
+    {
+        std::cout << "Enter username: ";
+        std::getline(std::cin, username);
+        std::cout << "Enter password: ";
+        std::getline(std::cin, password);
+        logged_in = login(username, password);
+        if (!logged_in) {
+            std::cout << "Login failed. Please try again." << std::endl;
+        }
+        std::cout << "Logged in as " << username << std::endl; break; 
+    }
+    
+    while (logged_in) {
         // --- 提示符现在会显示当前的数据库上下文 ---
         std::cout << "DB_CLI";
         if (!current_database.empty()) {
@@ -138,4 +153,12 @@ void CliApp::handle_delete(const DeleteCommand& cmd) {
     }
     std::cout << "[Placeholder] Deleting from table '" << cmd.table_name << "' in database '" << current_database << "'." << std::endl;
     // TODO: 序列化命令并发送到服务器
+}
+
+// --- 登录和登出功能 ---
+int CliApp::login(const std::string& username, const std::string& password) {
+    //登陆成功返回1、失败返回0
+}
+
+void CliApp::logout() { 
 }
