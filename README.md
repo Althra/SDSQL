@@ -14,3 +14,7 @@ make sdsql-client # Build Client
 
 默认用户名: admin
 默认密码: 123456
+
+默认使用 `127.0.0.1:4399` 通信。
+
+测试用例位于 `test/cli/testcase.txt`
