@@ -104,8 +104,9 @@ int main() {
     // --- 3. 测试 DML (数据操作语言) 操作 ---
     std::cout << "\n--- Testing DML Operations ---" << std::endl;
 
-    // 插入数据
-    std::cout << "\n--- 插入数据到 '" << tableName1 << "' ---" << std::endl;
+    // 插入数据 (使用 std::map 列名方式)
+    std::cout << "\n--- 插入数据到 '" << tableName1 << "' (按列名) ---"
+              << std::endl;
     std::map<std::string, std::string> student1 = {{"id", "101"},
                                                    {"name", "Alice"},
                                                    {"age", "18"},
@@ -113,10 +114,10 @@ int main() {
                                                    {"is_active", "true"}};
     if (dml_ops.insert(tableName1, student1)) {
       std::cout << "插入 Alice 成功。" << std::endl;
-      printTestResult("Insert Alice", true);
+      printTestResult("Insert Alice (by name)", true);
     } else {
       std::cerr << "错误：插入 Alice 失败。" << std::endl;
-      printTestResult("Insert Alice", false);
+      printTestResult("Insert Alice (by name)", false);
     }
 
     std::map<std::string, std::string> student2 = {{"id", "102"},
@@ -126,50 +127,74 @@ int main() {
                                                    {"is_active", "false"}};
     if (dml_ops.insert(tableName1, student2)) {
       std::cout << "插入 Bob 成功。" << std::endl;
-      printTestResult("Insert Bob", true);
+      printTestResult("Insert Bob (by name)", true);
     } else {
       std::cerr << "错误：插入 Bob 失败。" << std::endl;
-      printTestResult("Insert Bob", false);
+      printTestResult("Insert Bob (by name)", false);
     }
 
-    std::map<std::string, std::string> student3 = {{"id", "103"},
-                                                   {"name", "Charlie"},
-                                                   {"age", "18"},
-                                                   {"grade", "A"},
-                                                   {"is_active", "true"}};
-    if (dml_ops.insert(tableName1, student3)) {
-      std::cout << "插入 Charlie 成功。" << std::endl;
-      printTestResult("Insert Charlie", true);
+    // 插入数据 (使用 std::vector 索引方式)
+    std::cout << "\n--- 插入数据到 '" << tableName1 << "' (按索引) ---"
+              << std::endl;
+    // 假设列顺序是: id, name, age, grade, is_active
+    std::vector<std::string> student3_indexed = {"103", "Charlie", "18", "A",
+                                                 "true"};
+    if (dml_ops.insert(tableName1, student3_indexed)) {
+      std::cout << "插入 Charlie (按索引) 成功。" << std::endl;
+      printTestResult("Insert Charlie (by index)", true);
     } else {
-      std::cerr << "错误：插入 Charlie 失败。" << std::endl;
-      printTestResult("Insert Charlie", false);
+      std::cerr << "错误：插入 Charlie (按索引) 失败。" << std::endl;
+      printTestResult("Insert Charlie (by index)", false);
     }
 
-    // 尝试插入重复主键
-    std::map<std::string, std::string> student_dup = {
+    // 插入数据 (使用 std::vector 索引方式，部分值，缺失的会使用默认值)
+    std::cout << "\n--- 插入数据到 '" << tableName1 << "' (按索引，部分值) ---"
+              << std::endl;
+    // 缺少 grade 和 is_active，将使用默认值
+    std::vector<std::string> student4_indexed_partial = {"104", "David", "20"};
+    if (dml_ops.insert(tableName1, student4_indexed_partial)) {
+      std::cout << "插入 David (按索引，部分值) 成功。" << std::endl;
+      printTestResult("Insert David (by index, partial)", true);
+    } else {
+      std::cerr << "错误：插入 David (按索引，部分值) 失败。" << std::endl;
+      printTestResult("Insert David (by index, partial)", false);
+    }
+
+    // 尝试插入重复主键 (按列名)
+    std::map<std::string, std::string> student_dup_named = {
         {"id", "101"}, {"name", "Eve"}, {"age", "20"}, {"grade", "C"}};
-    bool dup_insert_res = dml_ops.insert(tableName1, student_dup) == 0;
-    printTestResult("Insert duplicate primary key (id=101)", dup_insert_res);
+    bool dup_insert_res_named =
+        dml_ops.insert(tableName1, student_dup_named) == 0;
+    printTestResult("Insert duplicate primary key (id=101, by name)",
+                    dup_insert_res_named);
+
+    // 尝试插入重复主键 (按索引)
+    std::vector<std::string> student_dup_indexed = {"102", "Frank", "22", "B",
+                                                    "false"};
+    bool dup_insert_res_indexed =
+        dml_ops.insert(tableName1, student_dup_indexed) == 0;
+    printTestResult("Insert duplicate primary key (id=102, by index)",
+                    dup_insert_res_indexed);
 
     // 查询所有数据
     std::cout << "\n--- 查询所有学生 ---" << std::endl;
     auto allStudents = dml_ops.select(tableName1);
     printQueryResult(allStudents);
-    printTestResult("Select all students",
-                    allStudents && allStudents->getRowCount() == 3);
+    printTestResult("Select all students (expected 4 rows)",
+                    allStudents && allStudents->getRowCount() == 4);
 
     // 带条件查询
     std::cout << "\n--- 查询 age = 18 且 grade = 'A' 的学生 ---" << std::endl;
     auto filteredStudents =
         dml_ops.select(tableName1, "age = 18 AND grade = 'A'");
     printQueryResult(filteredStudents);
-    printTestResult("Select students with age=18 AND grade=A",
+    printTestResult("Select students with age=18 AND grade=A (expected 2 rows)",
                     filteredStudents && filteredStudents->getRowCount() == 2);
 
     std::cout << "\n--- 查询 is_active = true 的学生 ---" << std::endl;
     auto activeStudents = dml_ops.select(tableName1, "is_active = 'true'");
     printQueryResult(activeStudents);
-    printTestResult("Select active students",
+    printTestResult("Select active students (expected 2 rows)",
                     activeStudents && activeStudents->getRowCount() == 2);
 
     // 带排序查询
@@ -205,8 +230,8 @@ int main() {
     std::cout << "\n--- 再次查询所有学生以验证删除 ---" << std::endl;
     allStudents = dml_ops.select(tableName1);
     printQueryResult(allStudents);
-    printTestResult("Select all students after removal",
-                    allStudents && allStudents->getRowCount() == 1);
+    printTestResult("Select all students after removal (expected 2 rows)",
+                    allStudents && allStudents->getRowCount() == 2);
 
     // --- 4. 测试 TransactionManager (事务管理) 操作 ---
     std::cout << "\n--- Testing Transaction Manager ---" << std::endl;

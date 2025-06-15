@@ -1,27 +1,22 @@
 // src/server/Database.cpp
 
-#include "../../include/server/DatabaseAPI.hpp"
-#include <filesystem>
-#include <fstream> // 用于从文件加载/保存数据
-#include <iostream>
-#include <map>
-#include <sstream> // For std::stringstream
+#include "../../include/server/DatabaseAPI.hpp" // 包含数据库API头文件
+#include <filesystem>                           // 用于文件和目录操作
+#include <fstream>                              // 用于文件读写
+#include <iostream> // 用于在控制台打印信息
+#include <map>      // 用于 std::map
+#include <sstream>  // 用于 std::stringstream
 
-// ========================================================================
-// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义，并且是 Database 的 Pimpl
-// 各个模块的 Impl 类现在也将在各自的 .cpp 文件中完全定义
-// ========================================================================
-
-// 移除所有 DDLOperations::Impl, DMLOperations::Impl, TransactionManager::Impl
-// 的前向声明和伪定义 它们会在各自的 .cpp
-// 文件中被完全定义，并由相应的公共类来管理其 unique_ptr
+// DDLOperations::Impl 的前向声明，其完整定义将在 DDLOperations.cpp 中
+// DMLOperations::Impl 的前向声明，其完整定义将在 DMLOperations.cpp 中
+// TransactionManager::Impl 的前向声明，其完整定义将在 TransactionManager.cpp 中
 
 // ========================================================================
 // Database 公共接口的实现
 // ========================================================================
 
 Database::Database(const std::string &dbPath)
-    // 直接将 DatabaseCoreImpl 作为 Database 的 Pimpl
+    // 直接将 DatabaseCoreImpl 作为 Database 的 Pimpl 管理
     : core_state_pImpl(std::make_unique<DatabaseCoreImpl>()) {
 
   // 初始化核心状态的 rootPath
@@ -33,7 +28,8 @@ Database::Database(const std::string &dbPath)
   }
 
   // 使用 core_state_pImpl.get() 将 DatabaseCoreImpl
-  // 的裸指针传递给各个模块的操作类
+  // 的裸指针传递给各个模块的操作类 这些操作类将使用该指针来初始化它们各自的
+  // Impl Pimpl
   ddl_ops = std::make_unique<DDLOperations>(core_state_pImpl.get());
   dml_ops = std::make_unique<DMLOperations>(core_state_pImpl.get());
   tx_manager = std::make_unique<TransactionManager>(core_state_pImpl.get());

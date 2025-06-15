@@ -1,11 +1,11 @@
-#include "../../include/server/DatabaseAPI.hpp"
+#include "../../include/server/DatabaseAPI.hpp" // 包含数据库API头文件
 #include <filesystem> // 用于文件和目录操作 (需要C++17)
 #include <fstream>    // 用于文件读写
 #include <iostream>   // 用于在控制台打印错误信息
 #include <sstream>    // 用于 std::stringstream
 #include <stdexcept>  // 用于抛出异常
 
-// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义。
+// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义。不需要在这里重复定义。
 
 /**
  * @brief DDLOperations的内部实现类 (Pimpl)，所有具体逻辑都在这里。
@@ -64,9 +64,7 @@ public:
       }
       // 在删除数据库时，清空该数据库下所有表的内存数据
       // 注意：这里需要确保删除的是当前数据库下的表
-      // 一个更严谨的实现会遍历 core_impl_->tables，检查每个表的完整路径
-      // 但对于当前设计，我们假设表名在当前数据库下是唯一的
-      // 直接清空内存中的所有表，因为删除一个数据库意味着它包含的所有表都将失效
+      // 对于当前设计，直接清空内存中的所有表，因为删除一个数据库意味着它包含的所有表都将失效
       core_impl_->tables.clear();
 
       std::filesystem::remove_all(dbPath);

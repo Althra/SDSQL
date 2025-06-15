@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义。
+// DatabaseCoreImpl 现在在 DatabaseAPI.hpp 中定义。不需要在这里重复定义。
 
 // --- 辅助函数：类型转换（用于条件评估）---
 // 这些函数在 DMLOperations.cpp 内部定义，不暴露给外部
@@ -99,14 +99,13 @@ bool evaluateSingleComparison(const Row &row, const TableData &tableMetadata,
         }
       }
       // 对于双字符操作符，确保它不是意外地匹配了单字符部分
-      if (op_pair.first.length() == 2 &&
-          trimmedCondition.length() > currentOpPos + 2) {
-        if (trimmedCondition.substr(currentOpPos, 3) == op_pair.first + "=" ||
-            trimmedCondition.substr(currentOpPos, 3) == op_pair.first + ">" ||
-            trimmedCondition.substr(currentOpPos, 3) == op_pair.first + "<") {
-          is_part_of_larger_op = true;
-        }
-      }
+      // 修正：确保不会将单个字符的操作符误认为是双字符操作符的一部分
+      // 比如对于 "A=B"，op_pair.first 是 "="，currentOpPos 是等号的位置
+      // trimmedCondition.substr(currentOpPos, 2) 会是 "=B"
+      // trimmedCondition.substr(currentOpPos - 1, 3) 会是 "A=B"
+      // 这样写有点复杂且容易出错，更简单的办法是按长度从大到小匹配操作符
+      // 当前的 operator
+      // 向量已经按长度从大到小排列，所以先找到的双字符操作符会优先匹配
 
       if (is_part_of_larger_op) {
         continue;
@@ -353,6 +352,7 @@ public:
 } // namespace DMLHelpers
 
 // --- DMLOperations::Impl 的具体实现 ---
+// 它会持有 DatabaseCoreImpl* 的指针来访问数据
 class DMLOperations::Impl {
 public:
   DatabaseCoreImpl *core_impl_; // 指向数据库核心实现的指针
@@ -365,8 +365,8 @@ public:
     std::cout << "DMLOperations::Impl: 已初始化。" << std::endl;
   }
   // DMLOperations::Impl 析构函数没有特别需要清理的资源，因为表数据由
-  // DatabaseCoreImpl 管理 ~Impl() { std::cout << "DMLOperations::Impl:
-  // 已销毁。" << std::endl; }
+  // DatabaseCoreImpl 管理
+  // ~Impl() { std::cout << "DMLOperations::Impl: 已销毁。" << std::endl; }
 
   /**
    * @brief 向表中插入一条记录。
@@ -450,7 +450,109 @@ public:
           rowDataString += val;
           firstCol = false;
         }
-        logFile << "INSERT;" << tableName << ";" << rowDataString << std::endl;
+        logFile << "INSERT_BY_NAME;" << tableName << ";" << rowDataString
+                << std::endl; // 区分日志条目
+        logFile.close();
+      }
+    }
+
+    std::cout << "DMLOperations::Impl: 成功插入到表 '" << tableName << "'。"
+              << std::endl;
+    return 1; // 成功插入一行
+  }
+
+  /**
+   * @brief 向表中插入一条记录，按照列的索引顺序提供值。
+   * 如果提供的值的数量少于表的列数，则剩余列将使用默认值。
+   * @param tableName 要插入记录的表的名称。
+   * @param values_by_index 值的向量，按照表中列的定义顺序排列。
+   * @return 成功插入的行数（通常为1），如果失败则返回0。
+   */
+  int insert(const std::string &tableName,
+             const std::vector<std::string> &values_by_index) {
+    if (core_impl_->currentDbName.empty()) {
+      std::cerr << "Error: No database selected." << std::endl;
+      return 0;
+    }
+
+    TableData *table = nullptr;
+    auto it = core_impl_->tables.find(tableName);
+    if (it != core_impl_->tables.end()) {
+      table = &it->second;
+    }
+
+    if (!table) {
+      throw TableNotFoundException("插入失败: 表 '" + tableName +
+                                   "' 不存在或未加载到内存。");
+    }
+
+    // 检查提供的值的数量是否超过表的列数
+    if (values_by_index.size() > table->columns.size()) {
+      std::cerr << "Error: 为表 '" << tableName << "' 提供了过多的值。预期最多 "
+                << table->columns.size() << " 个值，但实际提供了 "
+                << values_by_index.size() << " 个。" << std::endl;
+      return 0;
+    }
+
+    Row newRow(table->columns.size());
+    std::string primaryKeyValue;
+    bool hasPrimaryKey = false;
+    int primaryKeyColIndex = -1;
+
+    // 按照索引插入值并处理默认值
+    for (size_t i = 0; i < table->columns.size(); ++i) {
+      if (i < values_by_index.size()) {
+        // 如果提供了该索引的值，则使用它
+        newRow[i] = values_by_index[i];
+      } else {
+        // 如果提供的 `values_by_index` 数量不足，则为剩余列设置默认值
+        const auto &colDef = table->columns[i];
+        if (colDef.type == DataType::STRING)
+          newRow[i] = "";
+        else if (colDef.type == DataType::INT)
+          newRow[i] = "0";
+        else if (colDef.type == DataType::DOUBLE)
+          newRow[i] = "0.0";
+        else if (colDef.type == DataType::BOOL)
+          newRow[i] = "0";
+      }
+
+      // 检查是否是主键列
+      if (table->columns[i].isPrimaryKey) {
+        primaryKeyValue = newRow[i];
+        hasPrimaryKey = true;
+        primaryKeyColIndex = static_cast<int>(i); // 记录主键列的索引
+      }
+    }
+
+    // 检查主键重复
+    if (hasPrimaryKey) {
+      for (const Row &existingRow : table->rows) {
+        if (primaryKeyColIndex != -1 &&
+            existingRow.size() > primaryKeyColIndex &&
+            existingRow[primaryKeyColIndex] == primaryKeyValue) {
+          std::cerr << "Error: 主键值 '" << primaryKeyValue << "' 在表 '"
+                    << tableName << "' 中重复。" << std::endl;
+          return 0; // 主键重复，插入失败
+        }
+      }
+    }
+
+    table->rows.push_back(newRow);
+    // 如果有事务，记录到日志
+    if (core_impl_->isTransactionActive) {
+      std::ofstream logFile(core_impl_->transactionLogPath, std::ios::app);
+      if (logFile.is_open()) {
+        std::string rowDataString;
+        bool firstCol = true;
+        for (const auto &val : newRow) {
+          if (!firstCol)
+            rowDataString += ",";
+          rowDataString += val;
+          firstCol = false;
+        }
+        logFile << "INSERT_BY_INDEX;" << tableName << ";" << rowDataString
+                << std::endl; // 区分日志条目
         logFile.close();
       }
     }
@@ -481,6 +583,7 @@ public:
     if (it != core_impl_->tables.end()) {
       table = &it->second;
     }
+    
 
     if (!table) {
       throw TableNotFoundException("更新失败: 表 '" + tableName +
@@ -511,14 +614,15 @@ public:
                       << "' 不存在于表 '" << tableName << "' 中。" << std::endl;
           }
         }
-
+        Row newRow(table->columns.size());
+        
         // 如果有事务，记录新行数据到日志
         if (core_impl_->isTransactionActive) {
           std::ofstream logFile(core_impl_->transactionLogPath, std::ios::app);
           if (logFile.is_open()) {
             std::string newRowDataString;
             bool firstCol = true;
-            for (const auto &val : row) {
+            for (const auto &val : newRow) {
               if (!firstCol)
                 newRowDataString += ",";
               newRowDataString += val;
@@ -699,6 +803,12 @@ DMLOperations::~DMLOperations() = default;
 int DMLOperations::insert(const std::string &tableName,
                           const std::map<std::string, std::string> &values) {
   return pImpl->insert(tableName, values);
+}
+
+// 新增的 insert 重载函数的实现
+int DMLOperations::insert(const std::string &tableName,
+                          const std::vector<std::string> &values_by_index) {
+  return pImpl->insert(tableName, values_by_index);
 }
 
 int DMLOperations::update(const std::string &tableName,
