@@ -1,5 +1,5 @@
-#include "CliApp.hpp"
-#include "Lexer.hpp"
+#include "../../include/client/CliApp.hpp"
+#include "../../include/client/Lexer.hpp"
 #include <iostream>
 #include <memory>
 

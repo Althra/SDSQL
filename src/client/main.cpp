@@ -1,4 +1,4 @@
-#include "CliApp.hpp"
+#include "../../include/client/CliApp.hpp"
 
 int main() {
     CliApp app;

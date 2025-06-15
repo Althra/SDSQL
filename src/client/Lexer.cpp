@@ -1,4 +1,4 @@
-#include "Lexer.hpp"
+#include "../../include/client/Lexer.hpp"
 #include <cctype>
 #include <unordered_map>
 

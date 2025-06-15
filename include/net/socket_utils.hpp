@@ -1,0 +1,12 @@
+#pragma once
+
+enum class SocketError {
+    SOCKET_CREATE_FAILED,
+    BIND_FAILED,
+    LISTEN_FAILED,
+    ACCEPT_FAILED,
+    SEND_FAILED,
+    RECV_FAILED,
+    CONNECTION_CLOSED,
+    INVALID_ADDRESS
+};
