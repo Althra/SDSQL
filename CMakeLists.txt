@@ -14,3 +14,4 @@ aux_source_directory(src/network NETWORK_SRC)
 
 add_executable(sdsql-server ${SERVER_SRC} ${NETWORK_SRC} "driver/server_main.cpp")
 add_executable(sdsql-client ${CLIENT_SRC} ${NETWORK_SRC} "driver/client_main.cpp")
+ 
