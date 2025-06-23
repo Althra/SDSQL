@@ -1,6 +1,8 @@
 # SDSQL
 
-Build:
+C++ 课程大作业，一个简单的C/S分离的RDBMS
+
+## Build
 
 ```bash
 mkdir build
@@ -8,6 +10,11 @@ cd build
 cmake ..
 make sdsql-server # Build Server
 make sdsql-client # Build Client
+```
+
+## Run
+
+```bash
 ./sdsql-server # Run Server
 ./sdsql-client # Run Client
 ```
